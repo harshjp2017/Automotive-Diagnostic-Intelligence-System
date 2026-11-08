@@ -1,0 +1,6 @@
+{
+  "name": "Gemini Free Tier Studio",
+  "description": "Interactive Google AI Studio free tier workbench, model explorer, quota tracker, and code generator for Google account users.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

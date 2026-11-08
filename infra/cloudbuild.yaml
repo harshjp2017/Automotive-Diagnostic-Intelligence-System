@@ -1,0 +1,41 @@
+steps:
+  # 1. Build Container Image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/auto-service-rag/api:$COMMIT_SHA'
+      - '-f'
+      - 'api/Dockerfile'
+      - '.'
+
+  # 2. Push to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/auto-service-rag/api:$COMMIT_SHA'
+
+  # 3. Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'auto-service-rag-api'
+      - '--image'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/auto-service-rag/api:$COMMIT_SHA'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--service-account'
+      - 'api-runtime@$PROJECT_ID.iam.gserviceaccount.com'
+      - '--set-env-vars'
+      - 'GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=us-central1,GEMINI_MODEL=gemini-3.8-flash'
+      - '--allow-unauthenticated'
+
+images:
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/auto-service-rag/api:$COMMIT_SHA'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

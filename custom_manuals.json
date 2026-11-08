@@ -1,0 +1,23 @@
+[
+  {
+    "id": "user-manual-01-b00a0",
+    "vehicleMake": "Harsh Patel",
+    "vehicleModel": "vision 2050",
+    "yearRange": "2021",
+    "system": "Body Electronics & Safety (SRS/OCS)",
+    "title": "B00A0-Occupant Classification System (OCS) Sensor Fault",
+    "sectionCode": "USER-MANUAL-01",
+    "content": "DIAGNOSTIC & REPAIR PROCEDURE FOR DTC B00A0 (OCCUPANT CLASSIFICATION SYSTEM SENSOR):\n1. Diagnostic Verification: DTC B00A0 sets when the Supplemental Restraint System (SRS) or Occupant Classification System (OCS) electronic control module detects an out-of-range signal, harness discontinuity, or calibration mismatch from the passenger seat weight sensing mat.\n2. Visual & Harness Inspection: Check the multi-pin yellow SRS harness and connectors beneath the passenger seat assembly for pin fretting, terminal spread, or pinching caused by seat adjustment tracks.\n3. Resistance and Reference Voltage: Verify 5.0V reference supply from the OCS module to the strain-gauge sensor. Sensor resistance should read between 2.2k and 4.7k ohms under zero-weight calibration state.\n4. Zero-Point Calibration: Following seat cushion or sensor replacement, perform zero-point mass calibration using OEM scan tool with the seat completely empty and vehicle parked on a level surface.\n5. Safety Warning: Always disconnect 12V low-voltage battery and wait 90 seconds to allow the SRS backup capacitor to discharge completely before disconnecting any yellow SRS/OCS wiring harnesses.",
+    "torqueSpecs": {
+      "Passenger Seat Mounting Bolts to Floorpan": "48 Nm (35 ft-lb)",
+      "OCS Module Bracket Fasteners": "9 Nm (80 lb-in)",
+      "Seat Belt Buckle Anchor Bolt": "40 Nm (30 ft-lb)"
+    },
+    "dtcCodes": [
+      "B00A0",
+      "B00A1",
+      "B0001",
+      "B0010"
+    ]
+  }
+]

@@ -1,0 +1,41 @@
+[
+  {
+    "id": "eval-01-ford-p0300",
+    "vehicle_make": "Ford",
+    "vehicle_model": "F-150 EcoBoost 3.5L",
+    "vehicle_year": "2021",
+    "engine": "3.5L Twin Turbo",
+    "dtc_code": "P0300",
+    "symptoms": "Intermittent engine shudder and misfire under acceleration exceeding 50 mph",
+    "expected_section": "WSM 303-07A",
+    "expected_keywords": ["electrode gap", "0.030", "intake valve", "carbon", "camshaft phasers"],
+    "expected_torque_keys": ["Spark Plugs"],
+    "must_contain_warning": true
+  },
+  {
+    "id": "eval-02-tesla-hv-disconnect",
+    "vehicle_make": "Tesla",
+    "vehicle_model": "Model 3",
+    "vehicle_year": "2023",
+    "engine": "Dual Motor AWD",
+    "dtc_code": "BMS_a064",
+    "symptoms": "High voltage isolation alert, vehicle will not enter drive",
+    "expected_section": "WSM 4401",
+    "expected_keywords": ["HVIL", "12V", "zero energy", "pyro-fuse"],
+    "expected_torque_keys": ["High Voltage Penthouse Cover Fasteners"],
+    "must_contain_warning": true
+  },
+  {
+    "id": "eval-03-toyota-p0171",
+    "vehicle_make": "Toyota",
+    "vehicle_model": "RAV4",
+    "vehicle_year": "2022",
+    "engine": "2.5L Dynamic Force",
+    "dtc_code": "P0171",
+    "symptoms": "Check engine light illuminated, rough cold idle",
+    "expected_section": "RM-34J0U-ENG-082",
+    "expected_keywords": ["fuel trim", "smoke test", "intake", "MAF"],
+    "expected_torque_keys": ["Intake Manifold"],
+    "must_contain_warning": false
+  }
+]

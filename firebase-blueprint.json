@@ -1,0 +1,148 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile document storing basic account metadata",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique user ID matching auth.uid"
+        },
+        "email": {
+          "type": "string",
+          "description": "User primary email address"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Public display name"
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "Avatar photo URL"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Last update timestamp"
+        }
+      },
+      "required": ["id", "email", "createdAt"]
+    },
+    "SavedPrompt": {
+      "title": "SavedPrompt",
+      "description": "User saved prompt with workbench configuration",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Document ID"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Owner user UID"
+        },
+        "title": {
+          "type": "string",
+          "description": "Prompt title label"
+        },
+        "prompt": {
+          "type": "string",
+          "description": "Prompt content string"
+        },
+        "model": {
+          "type": "string",
+          "description": "Target model identifier"
+        },
+        "systemInstruction": {
+          "type": "string",
+          "description": "System instruction text"
+        },
+        "thinkingLevel": {
+          "type": "string",
+          "description": "Reasoning depth setting"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp"
+        }
+      },
+      "required": ["id", "userId", "title", "prompt", "createdAt"]
+    },
+    "GameScore": {
+      "title": "GameScore",
+      "description": "High score leaderboard entry from the Three.js 3D game",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Score record ID"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Player UID"
+        },
+        "userDisplayName": {
+          "type": "string",
+          "description": "Player display name"
+        },
+        "score": {
+          "type": "number",
+          "description": "Total points accumulated"
+        },
+        "crystalsCollected": {
+          "type": "number",
+          "description": "Number of quantum crystals collected"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Timestamp when run completed"
+        }
+      },
+      "required": ["id", "userId", "score", "createdAt"]
+    },
+    "AutoServiceTicket": {
+      "title": "AutoServiceTicket",
+      "description": "Automotive diagnostic repair ticket with RAG retrieval citations",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Ticket unique identifier" },
+        "userId": { "type": "string", "description": "User UID who ran the diagnostic" },
+        "vehicleYear": { "type": "string", "description": "Vehicle model year" },
+        "vehicleMake": { "type": "string", "description": "Vehicle make manufacturer" },
+        "vehicleModel": { "type": "string", "description": "Vehicle model name" },
+        "engine": { "type": "string", "description": "Engine code / displacement" },
+        "dtcCode": { "type": "string", "description": "Diagnostic Trouble Code (e.g., P0300)" },
+        "symptoms": { "type": "string", "description": "Driver reported symptoms" },
+        "diagnosis": { "type": "string", "description": "RAG-generated root cause diagnosis" },
+        "repairSteps": { "type": "string", "description": "Grounded step-by-step repair steps" },
+        "torqueSpecs": { "type": "string", "description": "Factory bolt torque specifications" },
+        "sourcesCited": { "type": "string", "description": "Manual sections cited by RAG" },
+        "status": { "type": "string", "description": "Ticket status: open, in-progress, resolved" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" }
+      },
+      "required": ["id", "userId", "vehicleMake", "vehicleModel", "dtcCode", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Stores user profiles restricted to their owner UID"
+    },
+    "/savedPrompts/{promptId}": {
+      "schema": "SavedPrompt",
+      "description": "Stores user's saved prompts for quick loading in the workbench"
+    },
+    "/gameScores/{scoreId}": {
+      "schema": "GameScore",
+      "description": "Leaderboard scores for the Three.js 3D Quantum Probe game"
+    },
+    "/autoServiceTickets/{ticketId}": {
+      "schema": "AutoServiceTicket",
+      "description": "Automotive service RAG diagnostic tickets and service records"
+    }
+  }
+}
