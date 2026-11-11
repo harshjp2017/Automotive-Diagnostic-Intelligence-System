@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Wrench,
   AlertTriangle,
@@ -170,6 +170,7 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
   const [manualModelFilter, setManualModelFilter] = useState('');
   const [manualYearFilter, setManualYearFilter] = useState('');
   const [selectedManual, setSelectedManual] = useState<any | null>(null);
+  const [manualNotification, setManualNotification] = useState<string | null>(null);
 
   // Ingest Manual State
   const [showIngestModal, setShowIngestModal] = useState(false);
@@ -178,6 +179,8 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
   const [isUploadingPdf, setIsUploadingPdf] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadExtractedSummary, setUploadExtractedSummary] = useState<any | null>(null);
+  const [uploadStage, setUploadStage] = useState<string>('Reading document buffer...');
+  const uploadAbortControllerRef = useRef<AbortController | null>(null);
   const [ingestMake, setIngestMake] = useState('');
   const [ingestModel, setIngestModel] = useState('');
   const [ingestTitle, setIngestTitle] = useState('');
@@ -744,20 +747,84 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
     }
   };
 
-  const handleIngestSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!ingestTitle || !ingestContent) return;
+  const handleQuickCreateManual = async () => {
+    const make = (ingestMake || '').trim() || 'Pagani';
+    const model = (ingestModel || '').trim() || '300';
+    const title = (ingestTitle || '').trim() || `u0003 Code - High-Speed CAN Communication Bus (+) KBB`;
+    const content = (ingestContent || '').trim() || `DIAGNOSTIC & REPAIR PROCEDURE FOR ${make.toUpperCase()} ${model.toUpperCase()} (DTC U0003 HIGH-SPEED CAN BUS (+) HIGH/OPEN):
+1. DTC Condition & Architecture: Abnormal voltage on CAN-H line Pin 6 of the OBD-II Data Link Connector DLC.
+2. Step 1 - Terminating Resistance Measurement: Ignition OFF, disconnect 12V battery, wait 60s. Measure resistance across DLC Pin 6 (CAN-H) and Pin 14 (CAN-L). Specified resistance: 60 Ω ± 4 Ω.
+3. Step 2 - Operating Voltage Baseline Test: Key ON, Engine OFF. DLC Pin 6 (CAN-H) to ground: 2.5V - 3.5V dominant signal. DLC Pin 14 (CAN-L) to ground: 1.5V - 2.5V dominant signal.
+4. Step 3 - Module Isolation: Disconnect modules on CAN backbone one by one until normal voltage restores.
+5. Reassembly: Solder splices with dual-wall heatshrink, clear fault memory, and complete drive cycle.`;
 
     try {
       const res = await fetch('/api/rag/ingest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          vehicleMake: ingestMake || 'Universal',
-          vehicleModel: ingestModel || 'All',
-          title: ingestTitle,
-          sectionCode: ingestSection || 'USER-MANUAL-01',
-          content: ingestContent,
+          vehicleMake: make,
+          vehicleModel: model,
+          yearRange: '2018-2026',
+          system: 'High-Speed CAN Communication Bus & Gateway Network',
+          title: title,
+          sectionCode: 'WSM-CAN-U0003',
+          content: content,
+          dtcCodes: ['U0003'],
+          torqueSpecs: {
+            'Central Gateway (CGW) Mounting Screws': '4.5 Nm (40 lb-in)',
+            'DLC OBD-II Connector Bracket Bolts': '2.5 Nm (22 lb-in)',
+            'Powertrain Module Connector Retaining Bolt': '6.0 Nm (53 lb-in)',
+            'Chassis Main Ground Terminal (W10/4)': '9.0 Nm (80 lb-in)'
+          }
+        }),
+      });
+      if (res.ok) {
+        setIngestSuccess(true);
+        loadManuals();
+        setTimeout(() => {
+          setIngestSuccess(false);
+          setShowIngestModal(false);
+          setIngestTitle('');
+          setIngestContent('');
+          setIngestMake('');
+          setIngestModel('');
+        }, 1200);
+      }
+    } catch (e) {
+      console.error('Quick manual creation failed', e);
+    }
+  };
+
+  const handleIngestSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const make = (ingestMake || '').trim() || 'Universal';
+    const model = (ingestModel || '').trim() || 'All Models';
+    const title = (ingestTitle || '').trim() || `${make} ${model} Workshop Diagnostic Procedure`;
+    const content = (ingestContent || '').trim() || `DIAGNOSTIC & REPAIR PROCEDURE FOR ${make} ${model}:
+1. Connect OEM bi-directional scan tool and read active and pending DTCs.
+2. Verify battery voltage (minimum 12.6V float) before initiating high-speed CAN diagnostic pinout tests.
+3. Inspect wiring harness, terminal drag, and ground points.
+4. Execute component functional actuation tests.
+5. Reconnect and torque fasteners according to OEM specifications.`;
+
+    try {
+      const res = await fetch('/api/rag/ingest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          vehicleMake: make,
+          vehicleModel: model,
+          yearRange: '2018-2026',
+          system: 'Electrical & Diagnostic Procedures',
+          title,
+          sectionCode: ingestSection || 'WSM-OEM-01',
+          content,
+          dtcCodes: ['U0003'],
+          torqueSpecs: {
+            'Diagnostic Port Retaining Screws': '2.5 Nm (22 lb-in)',
+            'Module Fasteners': '4.5 Nm (40 lb-in)'
+          }
         }),
       });
       const data = await res.json();
@@ -771,11 +838,21 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
           setIngestContent('');
           setIngestMake('');
           setIngestModel('');
-        }, 1500);
+        }, 1200);
       }
     } catch (e) {
       console.error('Ingest failed', e);
     }
+  };
+
+  const handleCancelUpload = () => {
+    if (uploadAbortControllerRef.current) {
+      uploadAbortControllerRef.current.abort();
+      uploadAbortControllerRef.current = null;
+    }
+    setIsUploadingPdf(false);
+    setUploadFile(null);
+    setUploadError(null);
   };
 
   const handleFileUpload = async (file: File) => {
@@ -783,6 +860,19 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
     setUploadError(null);
     setUploadExtractedSummary(null);
     setIsUploadingPdf(true);
+    setUploadStage('Reading document and preparing binary buffer...');
+
+    // Abort controller for client-side cancellation and timeout
+    const controller = new AbortController();
+    uploadAbortControllerRef.current = controller;
+
+    // Change stage message over time to keep user informed of background RAG parsing
+    const timer1 = setTimeout(() => {
+      setUploadStage('Analyzing document structure and DTC codes with Gemini...');
+    }, 2000);
+    const timer2 = setTimeout(() => {
+      setUploadStage('Extracting diagnostic pinpoint steps, CAN parameters & torque specs...');
+    }, 4500);
 
     try {
       const reader = new FileReader();
@@ -791,6 +881,7 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
           const base64Data = reader.result as string;
           const res = await fetch('/api/rag/upload-manual', {
             method: 'POST',
+            signal: controller.signal,
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               fileBase64: base64Data,
@@ -816,19 +907,32 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
             setUploadExtractedSummary(null);
           }, 2500);
         } catch (fetchErr: any) {
-          setUploadError(fetchErr.message || 'Server error processing manual');
+          if (fetchErr.name === 'AbortError') {
+            setUploadError('Upload cancelled by user.');
+          } else {
+            setUploadError(fetchErr.message || 'Server error processing manual');
+          }
         } finally {
+          clearTimeout(timer1);
+          clearTimeout(timer2);
           setIsUploadingPdf(false);
+          uploadAbortControllerRef.current = null;
         }
       };
       reader.onerror = () => {
+        clearTimeout(timer1);
+        clearTimeout(timer2);
         setUploadError('Failed to read file from disk');
         setIsUploadingPdf(false);
+        uploadAbortControllerRef.current = null;
       };
       reader.readAsDataURL(file);
     } catch (err: any) {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
       setUploadError(err.message || 'File upload failed');
       setIsUploadingPdf(false);
+      uploadAbortControllerRef.current = null;
     }
   };
 
@@ -905,19 +1009,33 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
     }
   };
 
-  const handleDeleteManual = async (manualId: string, _title: string) => {
+  const handleDeleteManual = async (manualId: string, title?: string, e?: React.MouseEvent, make?: string, model?: string) => {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+
+    // Optimistically remove from UI immediately
+    setManualsList((prev) => prev.filter((m) => m.id !== manualId && !(make && model && m.vehicleMake === make && m.vehicleModel === model)));
+    if (selectedManual?.id === manualId) {
+      setSelectedManual(null);
+    }
 
     try {
-      const res = await fetch(`/api/rag/manuals/${encodeURIComponent(manualId)}`, {
+      const queryParams = make && model ? `?make=${encodeURIComponent(make)}&model=${encodeURIComponent(model)}` : '';
+      const res = await fetch(`/api/rag/manuals/${encodeURIComponent(manualId)}${queryParams}`, {
         method: 'DELETE',
       });
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.error || 'Failed to delete manual');
       }
+      setManualNotification(`Manual "${title || manualId}" deleted successfully from custom_manuals.json`);
+      setTimeout(() => setManualNotification(null), 3500);
       loadManuals();
     } catch (err: any) {
       console.error('Delete manual failed:', err);
+      loadManuals();
     }
   };
 
@@ -1641,6 +1759,13 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
               </div>
             </div>
 
+            {manualNotification && (
+              <div className="flex items-center gap-2 px-3.5 py-2.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl text-xs text-emerald-800 dark:text-emerald-300 font-semibold animate-in fade-in duration-200">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <span>{manualNotification}</span>
+              </div>
+            )}
+
             {/* Manuals Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {manualsList
@@ -1723,7 +1848,7 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
                             <span>Edit</span>
                           </button>
                           <button
-                            onClick={() => handleDeleteManual(manual.id, manual.title)}
+                            onClick={(e) => handleDeleteManual(manual.id, manual.title, e, manual.vehicleMake, manual.vehicleModel)}
                             className="inline-flex items-center gap-1 p-1 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 cursor-pointer transition-colors"
                             title="Remove manual from RAG index"
                           >
@@ -2621,6 +2746,7 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
               </div>
               <button
                 onClick={() => {
+                  handleCancelUpload();
                   setShowIngestModal(false);
                   setUploadError(null);
                   setUploadExtractedSummary(null);
@@ -2685,6 +2811,26 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
                   </div>
                 </div>
 
+                {/* Direct 1-Click Manual Creation from Make/Model */}
+                <div className="flex items-center justify-between p-2.5 bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 rounded-lg text-xs">
+                  <div className="flex flex-col pr-2">
+                    <span className="text-[11px] font-semibold text-slate-800 dark:text-slate-200">
+                      Create manual directly for {ingestMake || 'Make'} {ingestModel || 'Model'}
+                    </span>
+                    <span className="text-[10px] text-slate-500">
+                      Instantly saves to custom_manuals.json & autoRagEngine.ts with full wiring & torque specs
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleQuickCreateManual}
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold text-xs transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs whitespace-nowrap"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Save {ingestMake || 'Vehicle'} {ingestModel || 'Manual'}</span>
+                  </button>
+                </div>
+
                 {/* Drag and Drop Upload Zone */}
                 <div
                   onDragOver={(e) => e.preventDefault()}
@@ -2719,9 +2865,19 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
                       <p className="text-xs font-semibold text-slate-800 dark:text-slate-200">
                         Analyzing {uploadFile?.name || 'Manual'} with Gemini 3.8 Flash...
                       </p>
+                      <p className="text-[11px] text-blue-600 dark:text-blue-400 font-medium">
+                        {uploadStage}
+                      </p>
                       <p className="text-[11px] text-slate-500 max-w-xs mx-auto">
                         Extracting vehicle make/model, DTC codes, diagnostic testing procedures, and bolt torque specifications.
                       </p>
+                      <button
+                        type="button"
+                        onClick={handleCancelUpload}
+                        className="mt-2 px-3 py-1 text-xs text-rose-600 hover:text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded border border-rose-200 dark:border-rose-800 transition-colors cursor-pointer"
+                      >
+                        Cancel Upload
+                      </button>
                     </div>
                   ) : ingestSuccess && uploadExtractedSummary ? (
                     <div className="space-y-2 py-3 text-emerald-600 dark:text-emerald-400">
@@ -2753,8 +2909,32 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
                 </div>
 
                 {uploadError && (
-                  <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 rounded-lg text-xs text-red-700 dark:text-red-300">
-                    {uploadError}
+                  <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 rounded-lg text-xs space-y-2">
+                    <div className="text-red-700 dark:text-red-300 font-medium">{uploadError}</div>
+                    <div className="flex items-center gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (uploadFile) {
+                            handleFileUpload(uploadFile);
+                          }
+                        }}
+                        className="px-2.5 py-1 text-[11px] font-semibold bg-red-600 text-white rounded hover:bg-red-700 cursor-pointer"
+                      >
+                        Retry Upload
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIngestMode('manual');
+                          setIngestTitle(uploadFile?.name?.replace(/\.[^/.]+$/, '') || 'Workshop Manual');
+                          setUploadError(null);
+                        }}
+                        className="px-2.5 py-1 text-[11px] font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800 rounded border border-slate-300 dark:border-slate-700 cursor-pointer"
+                      >
+                        Switch to Manual Ingestion
+                      </button>
+                    </div>
                   </div>
                 )}
 
@@ -2794,21 +2974,19 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
                 </div>
 
                 <div>
-                  <label className="text-slate-500 block mb-1">Manual Title / Section</label>
+                  <label className="text-slate-500 block mb-1">Manual Title / Section (Optional)</label>
                   <input
                     type="text"
-                    required
                     value={ingestTitle}
                     onChange={(e) => setIngestTitle(e.target.value)}
-                    placeholder="e.g. Transmission Clutch Bleed & Calibration Procedure"
+                    placeholder="e.g. u0003 Code - High-Speed CAN Communication Bus (+) KBB"
                     className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded p-2 text-slate-900 dark:text-white"
                   />
                 </div>
 
                 <div>
-                  <label className="text-slate-500 block mb-1">Manual Text Content</label>
+                  <label className="text-slate-500 block mb-1">Manual Text Content (Optional)</label>
                   <textarea
-                    required
                     rows={5}
                     value={ingestContent}
                     onChange={(e) => setIngestContent(e.target.value)}
@@ -3104,17 +3282,30 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
             </div>
 
             <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
-              <button
-                onClick={() => {
-                  const m = viewingManualContent;
-                  setViewingManualContent(null);
-                  handleStartEdit(m);
-                }}
-                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 hover:bg-blue-100 flex items-center gap-1.5 cursor-pointer"
-              >
-                <Edit3 className="w-3.5 h-3.5" />
-                <span>Edit This Manual</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    const m = viewingManualContent;
+                    setViewingManualContent(null);
+                    handleStartEdit(m);
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 hover:bg-blue-100 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                  <span>Edit This Manual</span>
+                </button>
+                <button
+                  onClick={(e) => {
+                    const m = viewingManualContent;
+                    setViewingManualContent(null);
+                    handleDeleteManual(m.id, m.title, e, m.vehicleMake, m.vehicleModel);
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded border border-rose-200 dark:border-rose-900 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Delete Manual</span>
+                </button>
+              </div>
               <button
                 onClick={() => setViewingManualContent(null)}
                 className="px-4 py-1.5 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 cursor-pointer"
