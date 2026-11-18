@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Trash2, Clock, Sparkles, Brain, Zap, ShieldAlert, Edit3, Check, X } from 'lucide-react';
+import { Send, Bot, User, Trash2, Clock, Sparkles, Brain, Zap, ShieldAlert, Edit3, Check, X, Cpu } from 'lucide-react';
 import { ChatMessage } from '../types';
 
 interface ChatPlaygroundProps {
@@ -50,19 +50,59 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
   ];
 
   const currentSysInstruction = customSystemPrompt || roles.find((r) => r.id === selectedRole)?.prompt || '';
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: '1',
-      role: 'model',
-      content: 'Hello! I am your Lead ASE Master Technician & Engineering Assistant, directly grounded in the shop\'s Auto Service RAG OEM manual database (including Ford, Toyota, Tesla, BMW, Chevrolet, and custom shop manuals like Harsh Patel vision 2050). How can I assist your diagnostic or repair work today?',
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    },
-  ]);
+  
+  const [technicianMemories, setTechnicianMemories] = useState<Array<{ id: string; category: string; key: string; value: string; timestamp: string }>>([]);
+
+  const activeTechName = technicianMemories.find((m) => m.key === 'technician_name')?.value;
+
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    try {
+      const saved = localStorage.getItem('auto_service_technician_chat_history_v2');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {
+      // fallback to initial message
+    }
+    return [
+      {
+        id: '1',
+        role: 'model',
+        content: 'Hello! I am your Lead ASE Master Technician & Engineering Assistant, directly grounded in the shop\'s Auto Service RAG OEM manual database (including Ford, Toyota, Tesla, BMW, Chevrolet, and custom shop manuals like Harsh Patel vision 2050). Persistent memory bank is active. How can I assist your diagnostic or repair work today?',
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      },
+    ];
+  });
+
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Load persistent memories on initial component mount
+  useEffect(() => {
+    fetch('/api/chat/memory')
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data.memories)) {
+          setTechnicianMemories(data.memories);
+        }
+      })
+      .catch((err) => console.warn('Could not load technician memories:', err));
+  }, []);
+
+  // Sync messages to localStorage to survive tab switches and refreshes
+  useEffect(() => {
+    if (messages && messages.length > 0) {
+      try {
+        localStorage.setItem('auto_service_technician_chat_history_v2', JSON.stringify(messages));
+      } catch (e) {
+        // ignore storage errors
+      }
+    }
+  }, [messages]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -118,6 +158,10 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
         throw new Error(data.error || `Request failed with status ${res.status}`);
       }
 
+      if (Array.isArray(data.technicianMemories)) {
+        setTechnicianMemories(data.technicianMemories);
+      }
+
       const botMsg: ChatMessage = {
         id: (Date.now() + 1).toString(),
         role: 'model',
@@ -160,14 +204,36 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
   };
 
   const handleClear = () => {
+    const techGreeting = activeTechName
+      ? `Chat session reset with role [${roles.find(r => r.id === selectedRole)?.name}]. Persistent Memory Bank active: welcome back, Master Technician ${activeTechName}! Grounded in Auto Service RAG knowledge base. Ready for technical instructions.`
+      : `Chat session reset with role [${roles.find(r => r.id === selectedRole)?.name}]. Grounded in Auto Service RAG knowledge base. Ready for technical instructions.`;
+
     setMessages([
       {
         id: '1',
         role: 'model',
-        content: `Chat session reset with role [${roles.find(r => r.id === selectedRole)?.name}]. Grounded in Auto Service RAG knowledge base. Ready for technical instructions.`,
+        content: techGreeting,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       },
     ]);
+  };
+
+  const handleClearMemory = async () => {
+    if (!window.confirm('Clear persistent technician memory bank? This will remove saved names and preferences.')) return;
+    try {
+      await fetch('/api/chat/memory', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clearAll: true }),
+      });
+      setTechnicianMemories([]);
+      try {
+        localStorage.removeItem('auto_service_technician_chat_history_v2');
+      } catch (e) {}
+      handleClear();
+    } catch (err) {
+      console.warn('Failed to clear memory bank:', err);
+    }
   };
 
   return (
@@ -188,7 +254,30 @@ export const ChatPlayground: React.FC<ChatPlaygroundProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center flex-wrap gap-2">
+            {/* Persistent Memory Badge */}
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 shadow-xs">
+              <Brain className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+              <span>{activeTechName ? `Memory: ${activeTechName}` : 'Memory Bank: Active'}</span>
+              {technicianMemories.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleClearMemory}
+                  title="Wipe persistent technician memory bank"
+                  className="ml-1 text-slate-400 hover:text-red-500 cursor-pointer text-xs font-bold px-1"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+
+            {/* MCP Hardware & Tools Connected Pill */}
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 shadow-xs">
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
+              <Cpu className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+              <span>MCP Tools (4 Servers)</span>
+            </div>
+
             {/* Model Selector */}
             <select
               value={selectedModel}

@@ -6,11 +6,27 @@
     "vehicle_year": "2021",
     "engine": "3.5L Twin Turbo",
     "dtc_code": "P0300",
-    "symptoms": "Intermittent engine shudder and misfire under acceleration exceeding 50 mph",
+    "symptoms": "Intermittent engine shudder and misfire under acceleration exceeding 50 mph, read live sensor PIDs and fuel trim",
+    "expected_manual_id": "ford-ecoboost-p0300",
     "expected_section": "WSM 303-07A",
-    "expected_keywords": ["electrode gap", "0.030", "intake valve", "carbon", "camshaft phasers"],
-    "expected_torque_keys": ["Spark Plugs"],
-    "must_contain_warning": true
+    "expected_keywords": [
+      "electrode gap",
+      "0.030",
+      "intake valve",
+      "carbon",
+      "camshaft phasers"
+    ],
+    "expected_torque_keys": [
+      "Spark Plugs"
+    ],
+    "expected_torque_values": [
+      "15 Nm"
+    ],
+    "must_contain_warning": true,
+    "expected_mcp_tool": "read_live_pids",
+    "prohibited_mcp_tools": [
+      "run_actuator_test"
+    ]
   },
   {
     "id": "eval-02-tesla-hv-disconnect",
@@ -19,11 +35,26 @@
     "vehicle_year": "2023",
     "engine": "Dual Motor AWD",
     "dtc_code": "BMS_a064",
-    "symptoms": "High voltage isolation alert, vehicle will not enter drive",
+    "symptoms": "High voltage isolation alert, vehicle will not enter drive, fetch freeze frame snapshot",
+    "expected_manual_id": "tesla-m3-hv-penthouse",
     "expected_section": "WSM 4401",
-    "expected_keywords": ["HVIL", "12V", "zero energy", "pyro-fuse"],
-    "expected_torque_keys": ["High Voltage Penthouse Cover Fasteners"],
-    "must_contain_warning": true
+    "expected_keywords": [
+      "HVIL",
+      "12V",
+      "zero energy",
+      "pyro-fuse"
+    ],
+    "expected_torque_keys": [
+      "High Voltage Penthouse Cover Fasteners"
+    ],
+    "expected_torque_values": [
+      "9 Nm"
+    ],
+    "must_contain_warning": true,
+    "expected_mcp_tool": "fetch_freeze_frame",
+    "prohibited_mcp_tools": [
+      "run_actuator_test"
+    ]
   },
   {
     "id": "eval-03-toyota-p0171",
@@ -32,10 +63,53 @@
     "vehicle_year": "2022",
     "engine": "2.5L Dynamic Force",
     "dtc_code": "P0171",
-    "symptoms": "Check engine light illuminated, rough cold idle",
+    "symptoms": "Check engine light illuminated, rough cold idle, check live PIDs and spark plug stock",
+    "expected_manual_id": "toyota-a25a-p0171",
     "expected_section": "RM-34J0U-ENG-082",
-    "expected_keywords": ["fuel trim", "smoke test", "intake", "MAF"],
-    "expected_torque_keys": ["Intake Manifold"],
-    "must_contain_warning": false
+    "expected_keywords": [
+      "fuel trim",
+      "smoke test",
+      "intake",
+      "MAF"
+    ],
+    "expected_torque_keys": [
+      "Intake Manifold"
+    ],
+    "expected_torque_values": [
+      "21 Nm"
+    ],
+    "must_contain_warning": false,
+    "expected_mcp_tool": "read_live_pids",
+    "prohibited_mcp_tools": [
+      "run_actuator_test"
+    ]
+  },
+  {
+    "id": "eval-04-toyota-hv-p0a80",
+    "vehicle_make": "Toyota",
+    "vehicle_model": "RAV4 Hybrid",
+    "vehicle_year": "2022",
+    "engine": "2.5L Hybrid AWD-i",
+    "dtc_code": "P0A80",
+    "symptoms": "Hybrid battery pack degradation alert, check BigQuery fleet clusters and service plug disconnect safety",
+    "expected_manual_id": "toyota-rav4-hv-p0a80",
+    "expected_section": "RM-HV-P0A80",
+    "expected_keywords": [
+      "high-voltage",
+      "service plug",
+      "disconnect",
+      "degradation"
+    ],
+    "expected_torque_keys": [
+      "12V Auxiliary Terminal"
+    ],
+    "expected_torque_values": [
+      "5.4 Nm"
+    ],
+    "must_contain_warning": true,
+    "expected_mcp_tool": "query_dtc_fleet_clusters",
+    "prohibited_mcp_tools": [
+      "run_actuator_test"
+    ]
   }
 ]

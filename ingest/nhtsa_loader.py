@@ -15,6 +15,7 @@ from typing import List, Dict, Any, Optional
 
 # Models indexed in workshop knowledge base
 TARGET_VEHICLES = [
+    {"make": "ford", "model": "f-150", "modelYear": 2021, "displayName": "Ford F-150 2021"},
     {"make": "ford", "model": "bronco", "modelYear": 2021, "displayName": "Ford Bronco 2021"},
     {"make": "ford", "model": "escape", "modelYear": 2021, "displayName": "Ford Escape 2021"},
     {"make": "toyota", "model": "rav4", "modelYear": 2021, "displayName": "Toyota RAV4 2021"},
@@ -63,7 +64,7 @@ CUSTOM_PROTOTYPE_COMPLAINT = {
 class NHTSADataLoader:
     """Fetches NHTSA safety recalls and ODI complaints, normalizes them, and streams to BigQuery."""
 
-    RECALLS_ENDPOINT = "https://api.nhtsa.gov/recalls"
+    RECALLS_ENDPOINT = "https://api.nhtsa.gov/recalls/recallsByVehicle"
     COMPLAINTS_ENDPOINT = "https://api.nhtsa.gov/complaints/complaintsByVehicle"
 
     def __init__(self, project_id: Optional[str] = None, dataset_id: str = "auto_service"):
@@ -71,37 +72,40 @@ class NHTSADataLoader:
         self.dataset_id = dataset_id
 
     def fetch_recalls_for_vehicle(self, make: str, model: str, year: int) -> List[Dict[str, Any]]:
-        """Queries NHTSA recalls for make/model/year."""
+        """Queries NHTSA vehicle-specific recalls API for make/model/modelYear."""
         params = urllib.parse.urlencode({
             "make": make,
             "model": model,
-            "year": year
+            "modelYear": year,
         })
         url = f"{self.RECALLS_ENDPOINT}?{params}"
         req = urllib.request.Request(url, headers={"User-Agent": "AutoServiceRAG-Research/1.0"})
+        display_make = "BMW" if make.lower() == "bmw" else make.title()
+        display_model = model.upper() if model.lower() in ("rav4", "f-150") else model.title()
         try:
             with urllib.request.urlopen(req, timeout=12) as resp:
                 data = json.loads(resp.read().decode())
                 raw_results = data.get("results", [])
                 normalized = []
-                for r in raw_results:
-                    rec_date = r.get("recall573Date") or r.get("createDate") or "2021-01-01"
+                for r in raw_results[:15]:
+                    campaign = r.get("NHTSACampaignNumber") or r.get("campaignId") or r.get("nhtsaCampaignNumber") or "UNKNOWN"
+                    rec_date = r.get("ReportReceivedDate") or r.get("recall573Date") or r.get("createDate") or "2021-01-01"
                     if "T" in rec_date:
                         rec_date = rec_date.split("T")[0]
                     normalized.append({
-                        "recall_id": str(r.get("id") or r.get("artemisId") or r.get("nhtsaCampaignNumber")),
-                        "nhtsa_campaign_number": r.get("campaignId") or r.get("nhtsaCampaignNumber") or "UNKNOWN",
-                        "vehicle_make": make.capitalize(),
-                        "vehicle_model": model.title(),
+                        "recall_id": str(r.get("id") or r.get("artemisId") or campaign),
+                        "nhtsa_campaign_number": campaign,
+                        "vehicle_make": display_make,
+                        "vehicle_model": display_model,
                         "model_year": year,
-                        "component": r.get("subject") or "SAFETY DEFECT",
-                        "summary": r.get("description") or "",
-                        "consequence": r.get("consequence") or "",
-                        "corrective_action": r.get("correctiveAction") or "",
+                        "component": r.get("Component") or r.get("subject") or "SAFETY DEFECT",
+                        "summary": r.get("Summary") or r.get("description") or "",
+                        "consequence": r.get("Consequence") or r.get("consequence") or "",
+                        "corrective_action": r.get("Remedy") or r.get("correctiveAction") or "",
                         "potential_units_affected": r.get("potaff") or 0,
                         "recall_date": rec_date,
                         "source_api": url,
-                        "ingested_at": datetime.utcnow().isoformat() + "Z"
+                        "ingested_at": datetime.utcnow().isoformat() + "Z",
                     })
                 return normalized
         except Exception as e:

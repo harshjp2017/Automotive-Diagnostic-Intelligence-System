@@ -3,7 +3,10 @@ Auto Service RAG - API Settings & Environment Configuration
 """
 
 import os
-from pydantic_settings import BaseSettings
+try:
+    from pydantic_settings import BaseSettings
+except ImportError:  # pragma: no cover - fallback when pydantic-settings is absent
+    from pydantic import BaseModel as BaseSettings
 
 class Settings(BaseSettings):
     PROJECT_ID: str = os.environ.get("GOOGLE_CLOUD_PROJECT", os.environ.get("PROJECT_ID", "auto-service-rag"))

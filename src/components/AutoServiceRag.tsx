@@ -40,6 +40,7 @@ import { collection, addDoc, query, where, orderBy, onSnapshot, updateDoc, doc, 
 // Nested Sub-modules
 import { Workbench } from './Workbench';
 import { ThreeGame } from './ThreeGame';
+import { LiveArchitectureLeftPanel } from './LiveArchitectureLeftPanel';
 import { VideoStudio } from './VideoStudio';
 import { GroundingStudio } from './GroundingStudio';
 import { ChatPlayground } from './ChatPlayground';
@@ -47,6 +48,7 @@ import { QuotaTracker } from './QuotaTracker';
 import { ModelMatrix } from './ModelMatrix';
 import { CodeExport } from './CodeExport';
 import { SetupGuide } from './SetupGuide';
+import { McpToolHub } from './McpToolHub';
 import { QuotaState, GenerateResponse } from '../types';
 
 export type AutoModule =
@@ -60,7 +62,8 @@ export type AutoModule =
   | 'video'
   | 'quotas'
   | 'code'
-  | 'cloud';
+  | 'cloud'
+  | 'mcp';
 
 interface AutoServiceRagProps {
   user: any;
@@ -147,12 +150,24 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
 
   // Execution State
   const [isDiagnosing, setIsDiagnosing] = useState(false);
+  const [isRunningAdk, setIsRunningAdk] = useState(false);
+  const [mileage, setMileage] = useState<string>('36000');
+  const [adkAgentsInfo, setAdkAgentsInfo] = useState<any | null>(null);
+  const [showAdkPanel, setShowAdkPanel] = useState(false);
+  const [showLeftTelemetry, setShowLeftTelemetry] = useState(true);
   const [result, setResult] = useState<{
     diagnosis: string;
     torqueSpecs: { [k: string]: string };
+    convertedTorque?: Record<string, any>;
     sourcesCited: string[];
     retrievedChunks: any[];
     rerankLog?: any[];
+    adkTrace?: any[];
+    warrantyAssessment?: any;
+    matchedRecalls?: any[];
+    complaintSummary?: any;
+    selfReflection?: any;
+    sessionId?: string;
     elapsedMs: number;
     model?: string;
   } | null>(null);
@@ -395,23 +410,26 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
 
     try {
       const ticketsRef = collection(db, 'autoServiceTickets');
-      const q = query(
-        ticketsRef,
-        where('userId', '==', user.uid),
-        orderBy('createdAt', 'desc')
-      );
+      const q = query(ticketsRef, where('userId', '==', user.uid));
 
       const unsubscribe = onSnapshot(
         q,
         (snapshot) => {
           const tickets: ServiceTicket[] = [];
           snapshot.forEach((docSnap) => {
-            tickets.push({ id: docSnap.id, ...docSnap.data() } as ServiceTicket);
+            tickets.push({ ...docSnap.data(), id: docSnap.id } as ServiceTicket);
           });
+          tickets.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
           setSavedTickets(tickets);
         },
         (err) => {
-          handleFirestoreError(err, OperationType.LIST, 'autoServiceTickets');
+          console.warn('Firestore listener fallback to local tickets:', err);
+          try {
+            const stored = localStorage.getItem('auto_service_local_tickets');
+            if (stored) setSavedTickets(JSON.parse(stored));
+          } catch {
+            // ignore
+          }
         }
       );
 
@@ -420,6 +438,15 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
       console.error('Error listening to tickets:', e);
     }
   }, [user]);
+
+  useEffect(() => {
+    fetch('/api/adk/agents')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data) setAdkAgentsInfo(data);
+      })
+      .catch(() => {});
+  }, []);
 
   const handleApplyPreset = (preset: typeof presetScenarios[0]) => {
     setVehicleMake(preset.make);
@@ -431,16 +458,68 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
     setQueryText(preset.query);
   };
 
+  const executeDiagnosticRequest = async (
+    endpoint: string,
+    payload: Record<string, unknown>,
+    fallbackModel: string,
+    defaultErrorMsg: string,
+    quotaCost: number,
+  ) => {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    // Safely parse JSON or handle HTML proxy errors (e.g. 504 / 502)
+    const rawText = await res.text();
+    let data: any = null;
+    try {
+      data = JSON.parse(rawText);
+    } catch {
+      let friendlyMsg = 'The diagnostic inference service timed out or is temporarily warming up. Please retry.';
+      if (rawText.includes('504') || rawText.toLowerCase().includes('gateway timeout')) {
+        friendlyMsg = 'Gateway Timeout (504): Model response took longer than the request window. Click "Retry Diagnostic" or try "Fast Diagnostic (Flash-Lite)".';
+      } else if (rawText.includes('502') || rawText.toLowerCase().includes('bad gateway')) {
+        friendlyMsg = 'Server Bad Gateway (502): The dev server was refreshing. Please retry.';
+      }
+      throw new Error(friendlyMsg);
+    }
+
+    if (!res.ok) {
+      throw new Error(data.error || defaultErrorMsg);
+    }
+
+    setResult({
+      diagnosis: data.diagnosis,
+      torqueSpecs: data.torqueSpecs || {},
+      convertedTorque: data.convertedTorque,
+      sourcesCited: data.sourcesCited || [],
+      retrievedChunks: data.retrievedChunks || [],
+      rerankLog: data.rerankLog || [],
+      adkTrace: data.adkTrace,
+      warrantyAssessment: data.warrantyAssessment,
+      matchedRecalls: data.matchedRecalls,
+      complaintSummary: data.complaintSummary,
+      selfReflection: data.selfReflection,
+      sessionId: data.sessionId,
+      elapsedMs: data.elapsedMs || 0,
+      model: data.model || fallbackModel,
+    });
+
+    onRecordQuota(quotaCost);
+  };
+
   const handleRunDiagnostic = async (overrideModel?: string) => {
-    if (isDiagnosing) return;
+    if (isDiagnosing || isRunningAdk) return;
     setIsDiagnosing(true);
     setError(null);
+    const targetModel = overrideModel || 'gemini-3.8-flash';
 
     try {
-      const res = await fetch('/api/rag/query', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      await executeDiagnosticRequest(
+        '/api/rag/query',
+        {
           vehicleMake,
           vehicleModel,
           vehicleYear,
@@ -448,41 +527,13 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
           dtcCode,
           symptoms,
           query: queryText,
-          model: overrideModel || 'gemini-3.8-flash',
+          model: targetModel,
           temperature,
-        }),
-      });
-
-      // Safely parse JSON or handle HTML proxy errors (e.g. 504 / 502)
-      const rawText = await res.text();
-      let data: any = null;
-      try {
-        data = JSON.parse(rawText);
-      } catch {
-        let friendlyMsg = 'The diagnostic inference service timed out or is temporarily warming up. Please retry.';
-        if (rawText.includes('504') || rawText.toLowerCase().includes('gateway timeout')) {
-          friendlyMsg = 'Gateway Timeout (504): Model response took longer than the request window. Click "Retry Diagnostic" or try "Fast Diagnostic (Flash-Lite)".';
-        } else if (rawText.includes('502') || rawText.toLowerCase().includes('bad gateway')) {
-          friendlyMsg = 'Server Bad Gateway (502): The dev server was refreshing. Please retry.';
-        }
-        throw new Error(friendlyMsg);
-      }
-
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to complete RAG diagnostic');
-      }
-
-      setResult({
-        diagnosis: data.diagnosis,
-        torqueSpecs: data.torqueSpecs || {},
-        sourcesCited: data.sourcesCited || [],
-        retrievedChunks: data.retrievedChunks || [],
-        rerankLog: data.rerankLog || [],
-        elapsedMs: data.elapsedMs || 0,
-        model: data.model || overrideModel || 'gemini-3.8-flash',
-      });
-
-      onRecordQuota(650);
+        },
+        targetModel,
+        'Failed to complete RAG diagnostic',
+        650,
+      );
     } catch (err: any) {
       setError(err.message || 'Diagnostic failed');
     } finally {
@@ -490,22 +541,49 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
     }
   };
 
-  const handleSaveTicketToFirestore = async () => {
-    if (!user) {
-      onRequireAuth();
-      return;
+  const handleRunAdkTriage = async () => {
+    if (isDiagnosing || isRunningAdk) return;
+    setIsRunningAdk(true);
+    setError(null);
+    const parsedMileage = parseInt(mileage, 10);
+
+    try {
+      await executeDiagnosticRequest(
+        '/api/adk/run',
+        {
+          vehicleMake,
+          vehicleModel,
+          vehicleYear,
+          engine,
+          dtcCode,
+          symptoms,
+          query: queryText,
+          mileage: Number.isFinite(parsedMileage) ? parsedMileage : 36000,
+          model: 'gemini-3.8-flash',
+          temperature,
+        },
+        'gemini-3.8-flash',
+        'Failed to execute ADK multi-agent triage',
+        850,
+      );
+    } catch (err: any) {
+      setError(err.message || 'ADK triage failed');
+    } finally {
+      setIsRunningAdk(false);
     }
+  };
+
+  const handleSaveTicketToFirestore = async () => {
     if (!result) return;
 
     setIsSavingTicket(true);
     try {
-      const torqueStr = Object.entries(result.torqueSpecs)
+      const torqueStr = Object.entries(result.torqueSpecs || {})
         .map(([k, v]) => `${k}: ${v}`)
         .join('; ');
-
-      await addDoc(collection(db, 'autoServiceTickets'), {
+      const createdAt = new Date().toISOString();
+      const baseTicket: Omit<ServiceTicket, 'id'> & { id: string } = {
         id: `ticket_${Date.now()}`,
-        userId: user.uid,
         vehicleYear,
         vehicleMake,
         vehicleModel,
@@ -515,15 +593,44 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
         diagnosis: result.diagnosis,
         repairSteps: 'See diagnostic report',
         torqueSpecs: torqueStr,
-        sourcesCited: result.sourcesCited.join(' | '),
+        sourcesCited: (result.sourcesCited || []).join(' | '),
         status: 'open',
-        createdAt: new Date().toISOString(),
+        createdAt,
+      };
+
+      let persistedToFirestore = false;
+      if (user) {
+        try {
+          const docRef = await addDoc(collection(db, 'autoServiceTickets'), {
+            ...baseTicket,
+            userId: user.uid,
+          });
+          baseTicket.id = docRef.id;
+          persistedToFirestore = true;
+        } catch (fsErr) {
+          console.warn('Firestore save failed, saving locally instead:', fsErr);
+        }
+      }
+
+      setSavedTickets((prev) => {
+        const deduped = prev.filter((t) => t.id !== baseTicket.id);
+        const next = [baseTicket, ...deduped];
+        try {
+          localStorage.setItem('auto_service_local_tickets', JSON.stringify(next));
+        } catch {
+          // ignore storage quota errors
+        }
+        return next;
       });
 
       setTicketSavedSuccess(true);
+      setTicketNotification(
+        persistedToFirestore
+          ? 'Ticket saved to Firestore & Saved Diagnostic Tickets!'
+          : 'Ticket saved locally to Saved Diagnostic Tickets (sign in with Google to sync to Firestore cloud).'
+      );
       setTimeout(() => setTicketSavedSuccess(false), 3000);
-    } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, 'autoServiceTickets');
+      setTimeout(() => setTicketNotification(null), 4000);
     } finally {
       setIsSavingTicket(false);
     }
@@ -1052,6 +1159,7 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
     { id: 'quotas' as const, label: 'Quotas & Models', icon: Activity },
     { id: 'code' as const, label: 'SDK & SQL Export', icon: Code },
     { id: 'cloud' as const, label: 'GCP CLI & IAM', icon: Terminal },
+    { id: 'mcp' as const, label: 'MCP Hardware & Tools', icon: Layers, badge: 'Protocol' },
   ];
 
   return (
@@ -1081,7 +1189,19 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
             </p>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 shrink-0 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setShowLeftTelemetry((v) => !v)}
+              className={`px-3 py-2 text-xs font-semibold rounded-xl border flex items-center gap-1.5 cursor-pointer shadow-2xs transition-colors ${
+                showLeftTelemetry
+                  ? 'border-emerald-500/50 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
+                  : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:border-blue-400'
+              }`}
+            >
+              <Activity className="w-3.5 h-3.5 text-emerald-500" />
+              <span>{showLeftTelemetry ? 'Live Chart Panel: ON' : 'Live Chart Panel: OFF'}</span>
+            </button>
             <button
               onClick={() => setActiveModule('cloud')}
               className="px-3 py-2 text-xs font-semibold rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:border-blue-400 flex items-center gap-1.5 cursor-pointer shadow-2xs"
@@ -1146,6 +1266,27 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
         </div>
       </div>
 
+      {/* Persistent Two-Column Shell: Left Live Chart Telemetry Panel + Main Active Module */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {showLeftTelemetry && (
+          <aside className="lg:col-span-4 xl:col-span-3 lg:sticky lg:top-20 min-w-0">
+            <LiveArchitectureLeftPanel
+              vehicleMake={vehicleMake}
+              vehicleModel={vehicleModel}
+              vehicleYear={vehicleYear}
+              dtcCode={dtcCode}
+              mileage={mileage}
+              isDiagnosing={isDiagnosing}
+              isRunningAdk={isRunningAdk}
+              manualsCount={manualsList.length}
+              adkAgentsInfo={adkAgentsInfo}
+              result={result}
+              onClose={() => setShowLeftTelemetry(false)}
+            />
+          </aside>
+        )}
+
+        <div className={showLeftTelemetry ? 'lg:col-span-8 xl:col-span-9 min-w-0 space-y-6' : 'lg:col-span-12 min-w-0 space-y-6'}>
       {/* MODULE 1: DTC DIAGNOSTIC RAG (CORE AUTOMOTIVE WORKSPACE) */}
       {activeModule === 'diagnostic' && (
         <div className="space-y-6">
@@ -1166,6 +1307,78 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Google ADK & A2A Protocol Status Strip */}
+          <div className="bg-slate-900 text-slate-100 border border-slate-800 rounded-xl px-4 py-3 shadow-xs">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2.5 text-xs">
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-semibold">
+                  <Cpu className="w-3.5 h-3.5" />
+                  <span>Google ADK + A2A Ready</span>
+                </span>
+                <span className="font-mono text-[11px] text-slate-300">
+                  Root: <strong className="text-white">{typeof adkAgentsInfo?.rootAgent === 'string' ? adkAgentsInfo.rootAgent : (adkAgentsInfo?.rootAgent?.name || 'dtc_diagnostics_agent')}</strong>
+                </span>
+                <span className="text-slate-600">•</span>
+                <span className="text-[11px] text-slate-400">
+                  {(adkAgentsInfo?.subAgents || adkAgentsInfo?.hierarchy?.subAgents)?.length ?? 3} Specialist Agents ({adkAgentsInfo?.a2aCardUrl || '/.well-known/agent-card.json'})
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <a
+                  href="/.well-known/agent-card.json"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-blue-300 font-mono flex items-center gap-1"
+                >
+                  <span>Agent Card</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setShowAdkPanel((v) => !v)}
+                  className="text-[11px] px-2.5 py-1 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-200 font-semibold cursor-pointer"
+                >
+                  {showAdkPanel ? 'Hide ADK CLI & Topology' : 'Inspect ADK CLI & Topology'}
+                </button>
+              </div>
+            </div>
+
+            {showAdkPanel && (
+              <div className="mt-3 pt-3 border-t border-slate-800 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                <div className="space-y-1.5">
+                  <div className="text-[11px] uppercase tracking-wider font-bold text-slate-400">
+                    ADK Agent Hierarchy &amp; Tools
+                  </div>
+                  <div className="space-y-1">
+                    {(adkAgentsInfo?.subAgents || adkAgentsInfo?.hierarchy?.subAgents || [
+                      { name: 'diagnostic_specialist', tools: ['search_workshop_manuals', 'convert_fastener_torque', 'verify_diagnostic_contradictions'] },
+                      { name: 'recall_safety_specialist', tools: ['lookup_nhtsa_recalls', 'lookup_nhtsa_complaints'] },
+                      { name: 'warranty_policy_specialist', tools: ['evaluate_warranty_coverage'] },
+                    ]).map((sub: any) => (
+                      <div key={sub.name} className="bg-slate-950/70 border border-slate-800 rounded-lg px-2.5 py-1.5">
+                        <div className="font-mono text-blue-300 font-semibold">{sub.name}</div>
+                        <div className="text-[11px] text-slate-400 font-mono truncate">
+                          {(sub.tools || []).join(', ')}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <div className="text-[11px] uppercase tracking-wider font-bold text-slate-400">
+                    ADK &amp; agents-cli Commands
+                  </div>
+                  <div className="bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-[11px] text-emerald-300 space-y-1 overflow-x-auto">
+                    <div>agents-cli playground</div>
+                    <div>uv run adk web</div>
+                    <div>uv run uvicorn app.fast_api_app:app --port 8080</div>
+                    <div className="text-slate-400">POST /api/adk/run  |  POST /run_sse</div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Main 2-Column Work Area */}
@@ -1333,23 +1546,41 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
                   </div>
                 </div>
 
+                {/* Odometer Mileage (Used by ADK Warranty Policy Agent) */}
+                <div>
+                  <label className="text-[11px] font-medium text-slate-500 block mb-1">
+                    Odometer Mileage (for ADK Warranty Coverage Specialist)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={500}
+                    value={mileage}
+                    onChange={(e) => setMileage(e.target.value)}
+                    placeholder="36000"
+                    className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-mono"
+                  />
+                </div>
+
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => handleRunDiagnostic()}
-                    disabled={isDiagnosing}
+                    onClick={handleRunAdkTriage}
+                    disabled={isDiagnosing || isRunningAdk}
                     className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-semibold text-white transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer ${
-                      isDiagnosing ? 'bg-blue-400 cursor-not-allowed opacity-75' : 'bg-blue-600 hover:bg-blue-700'
+                      isRunningAdk || isDiagnosing
+                        ? 'bg-emerald-500/70 cursor-not-allowed opacity-75'
+                        : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700'
                     }`}
                   >
-                    {isDiagnosing ? (
+                    {isRunningAdk ? (
                       <>
                         <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                        <span>Searching OEM Manuals & Grounding...</span>
+                        <span>Running Google ADK Multi-Agent Triage...</span>
                       </>
                     ) : (
                       <>
-                        <Search className="w-4 h-4" />
-                        <span>Execute Auto Service RAG Diagnostic</span>
+                        <Cpu className="w-4 h-4" />
+                        <span>Execute ADK Multi-Agent Triage (Manuals + NHTSA + Warranty)</span>
                       </>
                     )}
                   </button>
@@ -1586,6 +1817,137 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
                           ))}
                         </div>
                       </div>
+
+                      {/* Google ADK Multi-Agent Trace, Warranty & Recall Findings */}
+                      {result.adkTrace && result.adkTrace.length > 0 && (
+                        <div className="space-y-3">
+                          <div className="bg-emerald-50/70 dark:bg-emerald-950/25 border border-emerald-200 dark:border-emerald-900/60 rounded-lg p-3.5 space-y-2.5">
+                            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                              <span className="font-bold text-emerald-900 dark:text-emerald-300 flex items-center gap-1.5">
+                                <Cpu className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                                <span>Google ADK Multi-Agent Execution Trace</span>
+                              </span>
+                              {result.sessionId && (
+                                <span className="text-[10px] font-mono text-emerald-700 dark:text-emerald-400">
+                                  Session: {result.sessionId}
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="grid grid-cols-1 gap-2">
+                              {result.adkTrace.map((step: any) => (
+                                <div
+                                  key={step.step}
+                                  className="bg-white dark:bg-slate-900 border border-emerald-100 dark:border-emerald-900/50 rounded-lg p-2.5 text-xs space-y-1"
+                                >
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div className="flex items-center gap-2">
+                                      <span className="px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-200 font-mono text-[10px] font-bold">
+                                        Step {step.step}
+                                      </span>
+                                      <span className="font-mono font-bold text-slate-900 dark:text-white">
+                                        {step.agent}
+                                      </span>
+                                      <span className="text-[11px] text-slate-500">({step.role})</span>
+                                    </div>
+                                    <span className="text-[10px] font-mono text-slate-500">
+                                      {step.elapsedMs}ms
+                                    </span>
+                                  </div>
+                                  <div className="text-slate-700 dark:text-slate-300">{step.summary}</div>
+                                  {step.toolsCalled && step.toolsCalled.length > 0 && (
+                                    <div className="flex flex-wrap gap-1 pt-0.5">
+                                      {step.toolsCalled.map((tool: string, tidx: number) => (
+                                        <span
+                                          key={tidx}
+                                          className="px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-mono text-[10px]"
+                                        >
+                                          {tool}()
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          {result.warrantyAssessment && (
+                            <div className="grid grid-cols-1 gap-3">
+                              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-3.5 text-xs space-y-2 min-w-0">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                                    <ShieldAlert className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                                    <span>Warranty Coverage Verdict</span>
+                                  </span>
+                                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono break-words max-w-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300">
+                                    {result.warrantyAssessment.verdict}
+                                  </span>
+                                </div>
+                                <div className="text-[11px] text-slate-600 dark:text-slate-400">
+                                  {result.warrantyAssessment.vehicle} • Est. Age: {result.warrantyAssessment.estimatedAgeYears} yrs • {Number(result.warrantyAssessment.mileage).toLocaleString()} mi
+                                </div>
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-[10px] font-mono">
+                                  <div className={`px-2 py-1 rounded ${result.warrantyAssessment.coverageTiers?.bumperToBumper3yr36k ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'}`}>
+                                    3yr/36k B2B: {result.warrantyAssessment.coverageTiers?.bumperToBumper3yr36k ? 'IN' : 'OUT'}
+                                  </div>
+                                  <div className={`px-2 py-1 rounded ${result.warrantyAssessment.coverageTiers?.powertrain5yr60k ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'}`}>
+                                    5yr/60k Pwrtrn: {result.warrantyAssessment.coverageTiers?.powertrain5yr60k ? 'IN' : 'OUT'}
+                                  </div>
+                                  <div className={`px-2 py-1 rounded ${result.warrantyAssessment.coverageTiers?.hvBatteryOrEmissions8yr100k ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'}`}>
+                                    8yr/100k HV/Em: {result.warrantyAssessment.coverageTiers?.hvBatteryOrEmissions8yr100k ? 'IN' : 'OUT'}
+                                  </div>
+                                  <div className={`px-2 py-1 rounded ${result.warrantyAssessment.coverageTiers?.safetyRecallOverrideCandidate ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 font-bold' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'}`}>
+                                    Recall Override: {result.warrantyAssessment.coverageTiers?.safetyRecallOverrideCandidate ? 'YES' : 'NO'}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-3.5 text-xs space-y-2 min-w-0">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                                    <span>Self-Reflection &amp; NHTSA Matches</span>
+                                  </span>
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300">
+                                    {result.selfReflection?.status || 'VERIFIED'}
+                                  </span>
+                                </div>
+                                <div className="text-[11px] text-slate-600 dark:text-slate-400">
+                                  Recalls: <strong>{result.matchedRecalls?.length ?? 0}</strong> • Complaints: <strong>{result.complaintSummary?.totalMatched ?? 0}</strong>
+                                  {typeof result.complaintSummary?.crashReports === 'number' && ` (${result.complaintSummary.crashReports} crash, ${result.complaintSummary.fireReports} fire)`}
+                                </div>
+                                {result.selfReflection?.verifiedChecks && (
+                                  <ul className="space-y-0.5 text-[11px] text-slate-600 dark:text-slate-300 list-disc list-inside">
+                                    {result.selfReflection.verifiedChecks.map((chk: string, idx: number) => (
+                                      <li key={idx} className="break-words">{chk}</li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {result.matchedRecalls && result.matchedRecalls.length > 0 && (
+                            <div className="bg-rose-50/70 dark:bg-rose-950/25 border border-rose-200 dark:border-rose-900/60 rounded-lg p-3 text-xs space-y-1.5">
+                              <div className="font-bold text-rose-800 dark:text-rose-300 flex items-center gap-1.5">
+                                <AlertTriangle className="w-3.5 h-3.5" />
+                                <span>Matched NHTSA Safety Recalls ({result.matchedRecalls.length})</span>
+                              </div>
+                              {result.matchedRecalls.map((rec: any, rIdx: number) => (
+                                <div key={rIdx} className="bg-white dark:bg-slate-900 rounded p-2 border border-rose-100 dark:border-rose-900/40">
+                                  <div className="font-mono font-bold text-rose-700 dark:text-rose-300">
+                                    {rec.campaign_number || rec.nhtsa_campaign_number || 'RECALL'} — {rec.component}
+                                  </div>
+                                  <div className="text-[11px] text-slate-600 dark:text-slate-300 mt-0.5">
+                                    {rec.summary || rec.consequence}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                       {/* Two-Stage Retrieval & Re-ranking Audit */}
                       {result.rerankLog && result.rerankLog.length > 0 && (
@@ -2732,6 +3094,13 @@ export const AutoServiceRag: React.FC<AutoServiceRagProps> = ({
           <SetupGuide />
         </div>
       )}
+
+      {/* MODULE 11: MODEL CONTEXT PROTOCOL (MCP) HARDWARE & TOOL HUB */}
+      {activeModule === 'mcp' && (
+        <McpToolHub />
+      )}
+        </div>
+      </div>
 
       {/* Manual Ingestion Modal (PDF Upload + Manual Text Entry) */}
       {showIngestModal && (

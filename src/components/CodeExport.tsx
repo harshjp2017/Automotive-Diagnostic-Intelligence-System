@@ -16,7 +16,7 @@ export const CodeExport: React.FC<CodeExportProps> = ({
   prompt,
   responseFormat,
 }) => {
-  const [language, setLanguage] = useState<'typescript' | 'python' | 'curl' | 'rest' | 'bigquery-rag'>('typescript');
+  const [language, setLanguage] = useState<'typescript' | 'python' | 'adk-python' | 'curl' | 'rest' | 'bigquery-rag'>('typescript');
   const [pythonClientType, setPythonClientType] = useState<'vertex_ai' | 'api_key'>('vertex_ai');
   const [copied, setCopied] = useState(false);
   const [isEditingCode, setIsEditingCode] = useState(false);
@@ -216,12 +216,58 @@ FROM VECTOR_SEARCH(
 ORDER BY distance ASC;`;
   };
 
+  const generateAdkPythonSnippet = () => {
+    return `"""
+Google Agent Development Kit (ADK) Multi-Agent Automotive Triage
+Run interactive playground: agents-cli playground  OR  uv run adk web
+A2A Agent Card endpoint:   GET /.well-known/agent-card.json
+"""
+import asyncio
+from google.adk.runners import Runner
+from google.adk.sessions import InMemorySessionService
+from google.genai import types
+
+# Uses root_agent & App defined in app/agent.py
+from app.agent import app, root_agent
+
+
+async def run_adk_triage():
+    session_service = InMemorySessionService()
+    session = await session_service.create_session(
+        app_name=app.name,
+        user_id="service_advisor_01",
+    )
+
+    runner = Runner(
+        agent=root_agent,
+        app_name=app.name,
+        session_service=session_service,
+    )
+
+    prompt = ${JSON.stringify(cleanPrompt)}
+    content = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
+
+    async for event in runner.run_async(
+        user_id="service_advisor_01",
+        session_id=session.id,
+        new_message=content,
+    ):
+        if event.is_final_response() and event.content:
+            print("".join(p.text for p in event.content.parts if p.text))
+
+
+if __name__ == "__main__":
+    asyncio.run(run_adk_triage())`;
+  };
+
   const getCode = () => {
     switch (language) {
       case 'typescript':
         return generateTsSnippet();
       case 'python':
         return generatePythonSnippet();
+      case 'adk-python':
+        return generateAdkPythonSnippet();
       case 'curl':
         return generateCurlSnippet();
       case 'rest':
@@ -339,6 +385,7 @@ ORDER BY distance ASC;`;
               [
                 { id: 'typescript', label: 'TypeScript (@google/genai)' },
                 { id: 'python', label: 'Python (google-genai)' },
+                { id: 'adk-python', label: 'Python (Google ADK)' },
                 { id: 'bigquery-rag', label: 'BigQuery SQL (Vector RAG)' },
                 { id: 'curl', label: 'cURL Command' },
                 { id: 'rest', label: 'Fetch / REST' },
@@ -359,7 +406,15 @@ ORDER BY distance ASC;`;
           </div>
 
           <span className="text-xs text-slate-400 font-mono">
-            {language === 'typescript' ? 'server.ts' : language === 'python' ? 'smoke_test.py' : language === 'bigquery-rag' ? 'schema.sql' : 'terminal'}
+            {language === 'typescript'
+              ? 'server.ts'
+              : language === 'python'
+                ? 'smoke_test.py'
+                : language === 'adk-python'
+                  ? 'app/agent.py'
+                  : language === 'bigquery-rag'
+                    ? 'schema.sql'
+                    : 'terminal'}
           </span>
         </div>
 

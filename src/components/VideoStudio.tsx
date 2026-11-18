@@ -1,7 +1,35 @@
-import React, { useState } from 'react';
-import { Video, Film, Sparkles, Upload, Play, Clock, AlertCircle, CheckCircle2, RotateCcw, Trash2, Edit3 } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Video, Film, Sparkles, Upload, Play, Pause, Clock, AlertCircle, CheckCircle2, RotateCcw, Trash2, Edit3 } from 'lucide-react';
 
 const SAMPLE_IMAGE_PATH = '/src/assets/images/multimodal_sample_photo_1793739389613.jpg';
+
+function wrapCanvasText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  maxWidth: number,
+  lineHeight: number,
+  maxLines: number,
+) {
+  const words = (text || '').split(/\s+/);
+  let line = '';
+  let linesDrawn = 0;
+  for (let i = 0; i < words.length; i++) {
+    const testLine = line ? `${line} ${words[i]}` : words[i];
+    if (ctx.measureText(testLine).width > maxWidth && line) {
+      ctx.fillText(line, x, y + linesDrawn * lineHeight);
+      linesDrawn++;
+      if (linesDrawn >= maxLines) return;
+      line = words[i];
+    } else {
+      line = testLine;
+    }
+  }
+  if (line && linesDrawn < maxLines) {
+    ctx.fillText(line, x, y + linesDrawn * lineHeight);
+  }
+}
 
 export const VideoStudio: React.FC = () => {
   const [mode, setMode] = useState<'text' | 'image'>('text');
@@ -11,6 +39,10 @@ export const VideoStudio: React.FC = () => {
   const [imageBase64, setImageBase64] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [storyboard, setStoryboard] = useState<any | null>(null);
+  const [activeSceneIdx, setActiveSceneIdx] = useState(0);
+  const [isPlayingSb, setIsPlayingSb] = useState(true);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [elapsedMs, setElapsedMs] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -47,6 +79,7 @@ export const VideoStudio: React.FC = () => {
     setIsGenerating(true);
     setError(null);
     setVideoUrl(null);
+    setStoryboard(null);
 
     try {
       const res = await fetch('/api/video/generate', {
@@ -65,7 +98,14 @@ export const VideoStudio: React.FC = () => {
         throw new Error(data.error || 'Video generation failed');
       }
 
-      setVideoUrl(data.videoUrl);
+      if (data.videoUrl) {
+        setVideoUrl(data.videoUrl);
+      }
+      if (data.storyboard) {
+        setStoryboard(data.storyboard);
+        setActiveSceneIdx(0);
+        setIsPlayingSb(true);
+      }
       setElapsedMs(data.elapsedMs);
     } catch (err: any) {
       setError(err.message || 'Failed to generate video');
@@ -73,6 +113,120 @@ export const VideoStudio: React.FC = () => {
       setIsGenerating(false);
     }
   };
+
+  useEffect(() => {
+    if (!storyboard?.scenes?.length) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    let rafId = 0;
+    let sceneElapsed = 0;
+    let lastTime = performance.now();
+    const sceneDurationMs = 3500;
+
+    const renderFrame = (now: number) => {
+      const dt = now - lastTime;
+      lastTime = now;
+      if (isPlayingSb) {
+        sceneElapsed += dt;
+        if (sceneElapsed >= sceneDurationMs) {
+          sceneElapsed = 0;
+          setActiveSceneIdx((prev) => (prev + 1) % storyboard.scenes.length);
+        }
+      }
+
+      const w = canvas.width;
+      const h = canvas.height;
+      const scenes = storyboard.scenes;
+      const scene = scenes[activeSceneIdx] || scenes[0];
+      const pulse = 0.5 + 0.5 * Math.sin(now / 320);
+
+      // Background & technical grid
+      ctx.fillStyle = '#090f1d';
+      ctx.fillRect(0, 0, w, h);
+      ctx.strokeStyle = 'rgba(59, 130, 246, 0.12)';
+      ctx.lineWidth = 1;
+      for (let gx = 0; gx < w; gx += 32) {
+        ctx.beginPath();
+        ctx.moveTo(gx, 0);
+        ctx.lineTo(gx, h);
+        ctx.stroke();
+      }
+      for (let gy = 0; gy < h; gy += 32) {
+        ctx.beginPath();
+        ctx.moveTo(0, gy);
+        ctx.lineTo(w, gy);
+        ctx.stroke();
+      }
+
+      // Header strip
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+      ctx.fillRect(20, 18, w - 40, 56);
+      ctx.strokeStyle = 'rgba(59, 130, 246, 0.45)';
+      ctx.strokeRect(20, 18, w - 40, 56);
+
+      ctx.fillStyle = '#60a5fa';
+      ctx.font = 'bold 12px monospace';
+      ctx.fillText(`SCENE ${activeSceneIdx + 1} / ${scenes.length}  ·  ${String(storyboard.subtitle || 'OEM VERIFICATION').toUpperCase()}`, 34, 39);
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = 'bold 16px sans-serif';
+      ctx.fillText(String(storyboard.title || 'Diagnostic Verification Animation').slice(0, 58), 34, 62);
+
+      // Scene heading & instructions
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = 'bold 18px sans-serif';
+      ctx.fillText(String(scene.heading || ''), 28, 108);
+
+      ctx.fillStyle = '#cbd5e1';
+      ctx.font = '14px sans-serif';
+      wrapCanvasText(ctx, String(scene.action || ''), 28, 136, w - 56, 20, aspectRatio === '9:16' ? 5 : 3);
+
+      // Animated oscilloscope / telemetry waveform
+      const waveY = aspectRatio === '9:16' ? 280 : 215;
+      ctx.strokeStyle = '#10b981';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let x = 28; x < w - 28; x += 4) {
+        const norm = (x - 28) / Math.max(1, w - 56);
+        const yOff = Math.sin(norm * 18 + now / 180) * (10 + pulse * 6) + Math.cos(norm * 7 - now / 240) * 5;
+        if (x === 28) ctx.moveTo(x, waveY + yOff);
+        else ctx.lineTo(x, waveY + yOff);
+      }
+      ctx.stroke();
+
+      // Telemetry pill & pass box
+      const boxY = h - 108;
+      ctx.fillStyle = 'rgba(16, 185, 129, 0.14)';
+      ctx.fillRect(24, boxY, w - 48, 42);
+      ctx.strokeStyle = 'rgba(16, 185, 129, 0.55)';
+      ctx.strokeRect(24, boxY, w - 48, 42);
+
+      ctx.fillStyle = '#34d399';
+      ctx.font = 'bold 12px monospace';
+      ctx.fillText(`${scene.telemetryLabel || 'TELEMETRY'}: ${scene.telemetryValue || 'NOMINAL'}`, 36, boxY + 18);
+      ctx.fillStyle = '#fde68a';
+      ctx.font = '11px monospace';
+      ctx.fillText(`SPEC: ${scene.specCallout || 'OEM'}  |  PASS: ${scene.passCriteria || ''}`.slice(0, aspectRatio === '9:16' ? 48 : 88), 36, boxY + 35);
+
+      // Playback progress bar
+      const progW = ((activeSceneIdx + (isPlayingSb ? sceneElapsed / sceneDurationMs : 1)) / scenes.length) * (w - 48);
+      ctx.fillStyle = 'rgba(148, 163, 184, 0.25)';
+      ctx.fillRect(24, h - 42, w - 48, 6);
+      ctx.fillStyle = '#3b82f6';
+      ctx.fillRect(24, h - 42, Math.min(w - 48, progW), 6);
+
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '11px monospace';
+      ctx.fillText(isPlayingSb ? 'LIVE GEMINI 3.8 FLASH TECHNICAL SIMULATION' : 'PAUSED', 24, h - 18);
+
+      rafId = requestAnimationFrame(renderFrame);
+    };
+
+    rafId = requestAnimationFrame(renderFrame);
+    return () => cancelAnimationFrame(rafId);
+  }, [storyboard, activeSceneIdx, isPlayingSb, aspectRatio]);
 
   return (
     <div className="space-y-6">
@@ -337,11 +491,12 @@ export const VideoStudio: React.FC = () => {
                   <Edit3 className="w-3 h-3" />
                   <span>Edit Prompt</span>
                 </button>
-                {videoUrl && (
+                {(videoUrl || storyboard) && (
                   <button
                     type="button"
                     onClick={() => {
                       setVideoUrl(null);
+                      setStoryboard(null);
                       setElapsedMs(null);
                       setError(null);
                     }}
@@ -349,7 +504,7 @@ export const VideoStudio: React.FC = () => {
                     title="Delete / clear generated video"
                   >
                     <Trash2 className="w-3 h-3" />
-                    <span>Delete Video</span>
+                    <span>Clear Output</span>
                   </button>
                 )}
                 <span className="text-xs text-slate-500 font-mono">
@@ -411,6 +566,78 @@ export const VideoStudio: React.FC = () => {
                     >
                       Download MP4
                     </a>
+                  </div>
+                </div>
+              ) : storyboard ? (
+                <div className="w-full flex flex-col items-center space-y-3">
+                  <div
+                    className={`relative rounded-xl overflow-hidden bg-slate-950 shadow-lg border border-slate-800 ${
+                      aspectRatio === '9:16' ? 'w-64 aspect-[9/16]' : 'w-full aspect-[16/9]'
+                    }`}
+                  >
+                    <canvas
+                      ref={canvasRef}
+                      width={aspectRatio === '9:16' ? 405 : 720}
+                      height={aspectRatio === '9:16' ? 720 : 405}
+                      className="w-full h-full object-contain"
+                    />
+                  </div>
+                  <div className="w-full flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setIsPlayingSb((p) => !p)}
+                        className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold flex items-center gap-1 cursor-pointer"
+                      >
+                        {isPlayingSb ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+                        <span>{isPlayingSb ? 'Pause' : 'Play'}</span>
+                      </button>
+                      {(storyboard.scenes || []).map((sc: any, idx: number) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => {
+                            setActiveSceneIdx(idx);
+                            setIsPlayingSb(false);
+                          }}
+                          className={`px-2 py-1 rounded-lg font-mono text-[11px] border cursor-pointer ${
+                            activeSceneIdx === idx
+                              ? 'bg-blue-50 dark:bg-blue-950 border-blue-500 text-blue-700 dark:text-blue-300 font-bold'
+                              : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+                          }`}
+                        >
+                          Scene {idx + 1}
+                        </button>
+                      ))}
+                    </div>
+                    <span className="font-mono text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-medium">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      Synthesized in {elapsedMs ? `${(elapsedMs / 1000).toFixed(1)}s` : '~'} (gemini-3.8-flash)
+                    </span>
+                  </div>
+                  <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                    {(storyboard.scenes || []).map((sc: any, idx: number) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => {
+                          setActiveSceneIdx(idx);
+                          setIsPlayingSb(false);
+                        }}
+                        className={`text-left p-2.5 rounded-lg border transition-colors cursor-pointer ${
+                          activeSceneIdx === idx
+                            ? 'bg-blue-50/70 dark:bg-blue-950/30 border-blue-400'
+                            : 'bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-800'
+                        }`}
+                      >
+                        <div className="font-semibold text-slate-900 dark:text-white">
+                          {idx + 1}. {sc.heading}
+                        </div>
+                        <div className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5 line-clamp-2">
+                          {sc.passCriteria}
+                        </div>
+                      </button>
+                    ))}
                   </div>
                 </div>
               ) : (

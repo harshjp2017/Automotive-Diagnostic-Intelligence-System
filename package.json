@@ -4,12 +4,14 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx server.ts",
+    "dev": "tsx watch --ignore ./custom_manuals.json --ignore ./data/** server.ts",
+    "dev:once": "tsx server.ts",
     "build": "vite build",
     "start": "tsx server.ts",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "adk:web": "uv run adk web"
   },
   "dependencies": {
     "@google/genai": "^2.32.0",

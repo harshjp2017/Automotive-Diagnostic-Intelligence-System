@@ -24,5 +24,6 @@
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
+  "files": ["server.ts", "src/main.tsx"],
   "exclude": ["dist"]
 }

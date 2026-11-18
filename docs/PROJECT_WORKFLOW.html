@@ -1,0 +1,1602 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Automotive Diagnostic Intelligence System — Deep-Dive DTC P0300 Workflow</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --content: #f1f5f9;
+      --border: #cbd5e1;
+      --text: #0f172a;
+      --muted: #475569;
+      --primary: #2563eb;
+      --primary-fg: #ffffff;
+      --success: #059669;
+      --warning: #d97706;
+      --error: #dc2626;
+      --code-bg: #e2e8f0;
+    }
+    html[data-theme="dark"] {
+      --bg: #090e1a;
+      --card: #111827;
+      --content: #0b1220;
+      --border: #1e293b;
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+      --primary: #3b82f6;
+      --primary-fg: #ffffff;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --error: #f87171;
+      --code-bg: #1e293b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+      font-size: 14px;
+    }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      background: var(--code-bg);
+      padding: 2px 6px;
+      border-radius: 5px;
+    }
+    pre {
+      margin: 8px 0 0 0;
+      padding: 12px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-x: auto;
+    }
+    .container { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 20px; }
+    .subcard { background: var(--content); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+    .header-top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 16px; }
+    .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+    .badge { font-family: ui-monospace, monospace; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--content); }
+    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+    .kpi-val { font-size: 16px; font-weight: 700; margin: 4px 0; }
+    .muted { color: var(--muted); font-size: 12px; }
+    .tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+    .tab-btn, .tool-btn, .theme-btn {
+      padding: 8px 13px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .tool-btn { background: var(--content); font-family: ui-monospace, monospace; }
+    .tab-btn.active, .tool-btn.active { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
+    .hidden { display: none; }
+    .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
+    .grid-5 { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+    .stage-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin: 14px 0; }
+    .stage-btn { text-align: left; padding: 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--content); color: var(--text); cursor: pointer; }
+    .stage-btn.active { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25); }
+    h1 { margin: 0 0 8px 0; font-size: 22px; }
+    h2 { margin: 0 0 10px 0; font-size: 16px; }
+    h3 { margin: 4px 0 8px 0; font-size: 15px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+
+    <header class="card">
+      <div class="header-top">
+        <div style="flex:1; min-width:300px;">
+          <div class="badges">
+            <span class="badge" style="color:var(--primary);">dtc-diagnostics-system</span>
+            <span class="badge" style="color:var(--success);">Google ADK + A2A v0.3</span>
+            <span class="badge" style="color:var(--warning);">Deep-Dive Trace: DTC P0300</span>
+          </div>
+          <h1>Automotive Diagnostic Intelligence System — Deep-Dive DTC P0300 Workflow</h1>
+          <p class="muted" style="font-size:13px; max-width:800px;">
+            Complete walkthrough of purpose, 6-stage Hybrid RAG pipeline, Google ADK agent/tool calls, all 11 UI modules, live JSON contracts, and Windows auto-restart watchdog—illustrated end-to-end with a real diagnostic case: <strong>2021 Ford F-150 EcoBoost 3.5L · DTC P0300 · 42,000 miles</strong>.
+          </p>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:8px; align-items:flex-end;">
+          <button type="button" id="theme-toggle" class="theme-btn">Toggle Light / Dark</button>
+          <div class="subcard" style="font-family:ui-monospace,monospace; font-size:12px;">
+            <div style="color:var(--primary); font-weight:700;">Reference Vehicle Intake</div>
+            <div>2021 Ford F-150 EcoBoost 3.5L V6</div>
+            <div class="muted">DTC: <strong>P0300</strong> · Mileage: <strong>42,000 mi</strong></div>
+            <div class="muted">Bucking under boost, flashing CEL &gt; 45 MPH</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="kpi-grid">
+        <div class="subcard">
+          <div class="muted">Manual Grounding (Rank #1)</div>
+          <div class="kpi-val">TSB 21-2119 / WSM 303-07A</div>
+          <div class="muted">Stage-1: 3.713 &rarr; Stage-2 Rerank: 5.913</div>
+        </div>
+        <div class="subcard">
+          <div class="muted">ADK Execution Trace</div>
+          <div class="kpi-val">5 Steps · 1 Supervisor + 3 Sub</div>
+          <div class="muted">3 chunks retrieved · 11 torque specs standardized</div>
+        </div>
+        <div class="subcard">
+          <div class="muted">NHTSA &amp; Warranty Verdict</div>
+          <div class="kpi-val" style="color:var(--success);">COVERED_UNDER_NHTSA_RECALL</div>
+          <div class="muted">5yr/60k In · 15 Ford F-150 recalls · SEC 10-K 2.49%</div>
+        </div>
+        <div class="subcard">
+          <div class="muted">Self-Reflection Gate</div>
+          <div class="kpi-val" style="color:var(--success);">PASS (4 Verified Checks)</div>
+          <div class="muted">Spark 15 Nm · HPFP 12 Nm + 45° (TTY) · FRP</div>
+        </div>
+      </div>
+    </header>
+
+    <nav class="tabs">
+      <button type="button" data-tab="purpose" class="tab-btn active">1. Purpose &amp; Why Not Naive RAG (P0300)</button>
+      <button type="button" data-tab="workflow" class="tab-btn">2. 6-Stage P0300 Deep Workflow</button>
+      <button type="button" data-tab="adk" class="tab-btn">3. ADK Multi-Agent &amp; 6 Tool Calls</button>
+      <button type="button" data-tab="modules" class="tab-btn">4. All 11 Studio Modules on P0300</button>
+      <button type="button" data-tab="operations" class="tab-btn">5. Live P0300 JSON, APIs &amp; Watchdog</button>
+      <button type="button" data-tab="charts" class="tab-btn">6. Live Left Panel &amp; Charts</button>
+      <button type="button" data-tab="mcp" class="tab-btn" style="border-color:var(--primary);font-weight:700;">7. Model Context Protocol (MCP) Tools</button>
+      <button type="button" data-tab="evals" class="tab-btn" style="border-color:var(--warning);font-weight:700;">8. Automated EVALs &amp; When They Run</button>
+      <button type="button" data-tab="guardrails" class="tab-btn" style="border-color:var(--error);font-weight:700;">9. 4-Layer Runtime Guardrails</button>
+      <button type="button" data-tab="all" class="tab-btn" style="border-color:var(--success);">Show All Sections</button>
+    </nav>
+
+    <section id="tab-purpose" class="tab-panel">
+      <div class="grid-2">
+        <div class="card">
+          <h2>Why Generic RAG Fails on DTC P0300 (vs This System)</h2>
+          <p class="muted" style="font-size:13px;">
+            <code>DTC P0300</code> ("Random/Multiple Cylinder Misfire") appears in both <strong>Ford F-150 EcoBoost 3.5L</strong> (<code>ford-ecoboost-p0300</code>) and <strong>Chevy Silverado 5.3L V8</strong> (<code>chevy-silverado-p050d</code>), with incompatible causes and bolt specs.
+          </p>
+          <div class="subcard" style="border-color:var(--error); margin-top:10px;">
+            <strong style="color:var(--error);">Failure Mode: Naive 500-Token Chunking</strong>
+            <div class="muted" style="margin-top:4px;">Character slicing disconnects Step 1 (<code>0.030 in</code> gap check) from Spark Plugs <code>15 Nm</code>, and vector search without metadata filtering risks recommending Chevy AFM lifter collapse <code>40 Nm + 90° + 90°</code> head bolt steps for a Ford turbo V6.</div>
+          </div>
+          <div class="subcard" style="border-color:var(--success); margin-top:10px;">
+            <strong style="color:var(--success);">This System: Atomic Chunking + 2-Stage Rerank + ADK</strong>
+            <div class="muted" style="margin-top:4px;">Locks steps + torque tables together as <code>ServiceManualChunk</code>, promotes Ford <code>TSB 21-2119 / WSM 303-07A</code> to Rank #1 (<code>5.913</code> vs GM <code>3.661</code>), cross-checks 15 Ford F-150 NHTSA recalls, evaluates 5yr/60k powertrain eligibility at <code>42,000 mi</code>, and runs self-reflection safety verification.</div>
+          </div>
+          <div class="subcard" style="border-color:var(--primary); margin-top:10px;">
+            <strong style="color:var(--primary);">Actual Sample Chunk (<code>custom_manuals.json</code> &rarr; <code>ford-ecoboost-p0300</code>)</strong>
+            <pre>{
+  "id": "ford-ecoboost-p0300",
+  "vehicleMake": "Ford",
+  "vehicleModel": "F-150 EcoBoost 3.5L",
+  "yearRange": "2018-2024",
+  "system": "Engine Powertrain",
+  "title": "Ignition System &amp; Random Misfire Diagnostic Procedure (DTC P0300 / P0302)",
+  "sectionCode": "TSB 21-2119 / WSM 303-07A",
+  "content": "DIAGNOSTIC PROCEDURE FOR RANDOM MISFIRE (P0300) ON 3.5L ECOBOOST V6:\n1. Verify spark plug electrode gap: Factory specification is strictly 0.030 in (0.76 mm). Over-gapped plugs caused by spark erosion under twin-turbo boost pressures exceeding 14 psi will blow out spark kernel, triggering intermittent high-load misfires.\n2. Direct-Injection Carbon Build-up: Inspect intake valves using borescope. Direct-injected engines lack port fuel washing; heavy carbon buildup on intake valve tulips causes air tumbling turbulence and cold-start misfire codes.\n3. VCT Camshaft Phasers (TSB 21-2119): Check for cold-start rattle lasting 2-5 seconds. Worn locking pins in intake camshaft phasers cause timing deviation and intermittent P0016/P0300.\n4. Fuel Rail Pressure Sensor (FRP): Verify low-pressure fuel pump delivery (55-65 psi) and high-pressure rail pressure (2,150 psi at idle, up to 2,900 psi under wide-open throttle).",
+  "torqueSpecs": {
+    "Spark Plugs": "15 Nm (133 lb-in)",
+    "Ignition Coil Retaining Bolts": "10 Nm (89 lb-in)",
+    "Intake Manifold Upper Bolts": "10 Nm (89 lb-in) in cross pattern",
+    "High-Pressure Fuel Pump Mounting Bolts": "12 Nm + 45 degrees"
+  },
+  "dtcCodes": ["P0300", "P0301", "P0302", "P0303", "P0016"]
+}</pre>
+            <div class="muted" style="margin-top:6px;"><strong>Procedure-to-Torque Lock:</strong> Step 1 (gap/coil) &harr; <code>Spark Plugs 15 Nm</code> &amp; <code>Coils 10 Nm</code> · Step 2 (borescope) &harr; <code>Intake Manifold 10 Nm</code> · Step 3 (VCT phasers) &harr; <code>P0016</code> · Step 4 (FRP 2,150–2,900 psi) &harr; <code>HPFP 12 Nm + 45° TTY</code>.</div>
+          </div>
+        </div>
+        <div class="card">
+          <h2>End-to-End P0300 Data Flow Diagram</h2>
+          <svg viewBox="0 0 640 300" style="width:100%; height:auto; border-radius:12px; border:1px solid var(--border); background:var(--content);">
+            <rect x="16" y="18" width="165" height="264" rx="12" fill="none" stroke="var(--primary)" stroke-width="1.8" />
+            <text x="98" y="40" text-anchor="middle" fill="var(--primary)" font-size="11" font-weight="bold">1. Intake (AutoServiceRag)</text>
+            <text x="98" y="58" text-anchor="middle" fill="var(--text)" font-size="10">Make: Ford</text>
+            <text x="98" y="74" text-anchor="middle" fill="var(--text)" font-size="10">Model: F-150 EcoBoost 3.5L</text>
+            <text x="98" y="90" text-anchor="middle" fill="var(--text)" font-size="10">Year: 2021 | Miles: 42,000</text>
+            <text x="98" y="106" text-anchor="middle" fill="var(--warning)" font-size="10" font-weight="bold">DTC: P0300</text>
+            <rect x="28" y="124" width="141" height="44" rx="7" fill="none" stroke="var(--border)" />
+            <text x="98" y="143" text-anchor="middle" fill="var(--text)" font-size="10">POST /api/adk/run</text>
+            <text x="98" y="158" text-anchor="middle" fill="var(--muted)" font-size="9">or /v1/adk/run (Python)</text>
+            <rect x="28" y="182" width="141" height="86" rx="7" fill="none" stroke="var(--success)" />
+            <text x="98" y="202" text-anchor="middle" fill="var(--success)" font-size="10" font-weight="bold">UI Trace Output</text>
+            <text x="98" y="218" text-anchor="middle" fill="var(--text)" font-size="9">5 ADK Steps + Citations</text>
+            <text x="98" y="233" text-anchor="middle" fill="var(--text)" font-size="9">Warranty Verdict Card</text>
+            <text x="98" y="248" text-anchor="middle" fill="var(--text)" font-size="9">11 Converted Torque Specs</text>
+            <text x="98" y="263" text-anchor="middle" fill="var(--muted)" font-size="9">Save to Firestore Ticket</text>
+
+            <rect x="212" y="18" width="212" height="264" rx="12" fill="none" stroke="var(--success)" stroke-width="1.8" />
+            <text x="318" y="40" text-anchor="middle" fill="var(--success)" font-size="11" font-weight="bold">2. ADK Root: dtc_diagnostics_agent</text>
+            <rect x="225" y="54" width="186" height="48" rx="7" fill="none" stroke="var(--border)" />
+            <text x="318" y="72" text-anchor="middle" fill="var(--text)" font-size="10" font-weight="bold">diagnostic_specialist (12ms)</text>
+            <text x="318" y="88" text-anchor="middle" fill="var(--muted)" font-size="9">Rank #1: TSB 21-2119 (5.913)</text>
+            <rect x="225" y="110" width="186" height="48" rx="7" fill="none" stroke="var(--border)" />
+            <text x="318" y="128" text-anchor="middle" fill="var(--text)" font-size="10" font-weight="bold">recall_safety_specialist (9ms)</text>
+            <text x="318" y="144" text-anchor="middle" fill="var(--muted)" font-size="9">15 Ford F-150 Recalls · 40 Complaints</text>
+            <rect x="225" y="166" width="186" height="48" rx="7" fill="none" stroke="var(--border)" />
+            <text x="318" y="184" text-anchor="middle" fill="var(--text)" font-size="10" font-weight="bold">warranty_policy_specialist (24ms)</text>
+            <text x="318" y="200" text-anchor="middle" fill="var(--muted)" font-size="9">5yr/60k In + Recall Override</text>
+            <rect x="225" y="222" width="186" height="46" rx="7" fill="none" stroke="var(--primary)" />
+            <text x="318" y="241" text-anchor="middle" fill="var(--primary)" font-size="10" font-weight="bold">verify_diagnostic_contradictions</text>
+            <text x="318" y="256" text-anchor="middle" fill="var(--success)" font-size="9">Status: PASS (4 checks, 6ms)</text>
+
+            <rect x="454" y="18" width="170" height="264" rx="12" fill="none" stroke="var(--border)" stroke-width="1.8" />
+            <text x="539" y="40" text-anchor="middle" fill="var(--text)" font-size="11" font-weight="bold">3. Grounding &amp; Models</text>
+            <rect x="467" y="54" width="144" height="50" rx="7" fill="none" stroke="var(--border)" />
+            <text x="539" y="73" text-anchor="middle" fill="var(--text)" font-size="10">custom_manuals.json</text>
+            <text x="539" y="88" text-anchor="middle" fill="var(--muted)" font-size="9">id: ford-ecoboost-p0300</text>
+            <rect x="467" y="114" width="144" height="50" rx="7" fill="none" stroke="var(--border)" />
+            <text x="539" y="133" text-anchor="middle" fill="var(--text)" font-size="10">data/nhtsa_*.json</text>
+            <text x="539" y="148" text-anchor="middle" fill="var(--muted)" font-size="9">Recalls + ODI + Cluster</text>
+            <rect x="467" y="174" width="144" height="44" rx="7" fill="none" stroke="var(--border)" />
+            <text x="539" y="193" text-anchor="middle" fill="var(--text)" font-size="10">oem_financial_metrics.json</text>
+            <text x="539" y="207" text-anchor="middle" fill="var(--muted)" font-size="9">Ford FY23 $4,782M (2.49%)</text>
+            <rect x="467" y="226" width="144" height="42" rx="7" fill="none" stroke="var(--primary)" />
+            <text x="539" y="244" text-anchor="middle" fill="var(--primary)" font-size="10" font-weight="bold">Vertex AI ADC (global)</text>
+            <text x="539" y="258" text-anchor="middle" fill="var(--muted)" font-size="9">gemini-3.8-flash / flash-lite</text>
+
+            <line x1="181" y1="145" x2="212" y2="145" stroke="var(--primary)" stroke-width="1.8" />
+            <line x1="212" y1="226" x2="181" y2="226" stroke="var(--success)" stroke-width="1.8" />
+            <line x1="424" y1="78" x2="467" y2="78" stroke="var(--muted)" stroke-width="1.5" />
+            <line x1="424" y1="134" x2="467" y2="134" stroke="var(--muted)" stroke-width="1.5" />
+            <line x1="424" y1="190" x2="467" y2="190" stroke="var(--muted)" stroke-width="1.5" />
+            <line x1="424" y1="246" x2="467" y2="246" stroke="var(--primary)" stroke-width="1.5" />
+          </svg>
+        </div>
+      </div>
+
+      <div class="grid-2" style="margin-top:16px;">
+        <div class="card">
+          <h2>Unified Execution: ADK Multi-Agent Triage (Complete RAG + Triage Superset)</h2>
+          <p class="muted" style="font-size:13px;">The green <strong>Execute ADK Multi-Agent Triage</strong> button under <strong>Odometer Mileage</strong> replaced the legacy blue button in the UI because it covers everything from single-pass RAG plus recalls, warranty, and safety checks:</p>
+          <div class="subcard" style="border-color:var(--success); margin-top:10px;">
+            <strong style="color:var(--success);">Primary Action: Execute ADK Multi-Agent Triage (<code>POST /api/adk/run</code> · +850 quota)</strong>
+            <div class="muted" style="margin-top:4px;">Runs <code>retrieveAndRerankManuals()</code> (identical 2-stage RAG, citations, <code>rerankLog</code>, and raw torque map) AND orchestrates supervisor <code>dtc_diagnostics_agent</code> + 3 specialists (Manuals, NHTSA Recalls/ODI, Warranty Tiers + SEC 10-K), converts torques (Nm/ft-lb/lb-in/TTY), and enforces <code>verify_diagnostic_contradictions()</code>.</div>
+          </div>
+          <div class="subcard" style="margin-top:10px;">
+            <strong style="color:var(--primary);">Backend Lightweight Route: Single-Pass RAG (<code>POST /api/rag/query</code> · +650 quota)</strong>
+            <div class="muted" style="margin-top:4px;">Kept as a lighter API route (and Flash-Lite retry handler) that runs 2-stage manual retrieval + one <code>gemini-3.8-flash</code> call without NHTSA recall, warranty, TTY torque conversion, or self-reflection passes.</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Why Multiple DTCs (<code>P0300, P0301, P0302, P0303, P0016</code>) Share One Manual</h2>
+          <div class="subcard" style="margin-top:10px;">
+            <strong>1. Same OEM Fault Family &amp; Pinpoint Procedure (<code>TSB 21-2119 / WSM 303-07A</code>)</strong>
+            <div class="muted" style="margin-top:4px;"><code>P0300</code> (Random Misfire) and <code>P0301–P0303</code> (Cylinders 1–3 Misfires) share the identical <code>0.030 in</code> spark plug gap check and <code>15 Nm / 10 Nm</code> torque table, while <code>P0016</code> (Cam/Crank Correlation) is triggered alongside <code>P0300</code> by the VCT cam phaser cold-start rattle covered in Step 3.</div>
+          </div>
+          <div class="subcard" style="margin-top:10px;">
+            <strong>2. Multi-Code RAG Metadata Boost (<code>dtcMatch: true</code>)</strong>
+            <div class="muted" style="margin-top:4px;">Storing all 5 companion codes in <code>dtcCodes[]</code> guarantees Stage-1/Stage-2 retrieval awards the exact-DTC boost whether the technician scans <code>P0300</code>, <code>P0302</code>, or <code>P0016</code>.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:16px;">
+        <h2>Agent Workflow Flowchart (Sequential vs. Hub-and-Spoke Parallel) — DTC P0300</h2>
+        <p class="muted" style="font-size:13px;">Visible flow chart showing Pattern A (<code>POST /api/adk/run</code> sequential steps 1&rarr;5) vs Pattern B (<code>app/agent.py</code> hub-and-spoke parallel Turn 1 + sequential Turn 2) for <code>2021 Ford F-150 · P0300 @ 45,000 mi</code>.</p>
+        <svg viewBox="0 0 860 360" style="width:100%; height:auto; border-radius:12px; border:1px solid var(--border); background:var(--content); margin-top:10px;">
+          <defs>
+            <marker id="t1-d-arr-p" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="var(--primary)" /></marker>
+            <marker id="t1-d-arr-s" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="var(--success)" /></marker>
+            <marker id="t1-d-arr-w" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="var(--warning)" /></marker>
+          </defs>
+          <rect x="14" y="14" width="405" height="332" rx="12" fill="none" stroke="var(--primary)" stroke-width="1.5" />
+          <text x="216" y="36" text-anchor="middle" fill="var(--primary)" font-size="12" font-weight="bold">Pattern A: POST /api/adk/run (Sequential 1 &rarr; 5)</text>
+          <rect x="34" y="48" width="365" height="40" rx="8" fill="none" stroke="var(--border)" />
+          <text x="216" y="65" text-anchor="middle" fill="var(--text)" font-size="10" font-weight="bold">Step 1: dtc_diagnostics_agent (0ms)</text>
+          <text x="216" y="80" text-anchor="middle" fill="var(--muted)" font-size="9">Input: Ford | F-150 EcoBoost 3.5L | 2021 | P0300 | 45,000 mi</text>
+          <line x1="216" y1="88" x2="216" y2="104" stroke="var(--primary)" stroke-width="1.6" marker-end="url(#t1-d-arr-p)" />
+          <rect x="34" y="106" width="365" height="40" rx="8" fill="none" stroke="var(--border)" />
+          <text x="216" y="123" text-anchor="middle" fill="var(--text)" font-size="10" font-weight="bold">Step 2: diagnostic_specialist (12ms)</text>
+          <text x="216" y="138" text-anchor="middle" fill="var(--muted)" font-size="9">Finds TSB 21-2119 (Rank #1) + converts 15 Nm &amp; 12 Nm+45° TTY</text>
+          <line x1="216" y1="146" x2="216" y2="162" stroke="var(--primary)" stroke-width="1.6" marker-end="url(#t1-d-arr-p)" />
+          <rect x="34" y="164" width="365" height="40" rx="8" fill="none" stroke="var(--warning)" />
+          <text x="216" y="181" text-anchor="middle" fill="var(--text)" font-size="10" font-weight="bold">Step 3: recall_safety_specialist (9ms)</text>
+          <text x="216" y="196" text-anchor="middle" fill="var(--muted)" font-size="9">Finds 15 Ford F-150 Recalls (21V986000, 21V090000) &amp; ODI rows</text>
+          <line x1="216" y1="204" x2="216" y2="224" stroke="var(--success)" stroke-width="1.6" marker-end="url(#t1-d-arr-s)" />
+          <text x="226" y="217" fill="var(--success)" font-size="8.5" font-weight="bold">Passes 15 recalls &rarr; Recall Override check</text>
+          <rect x="34" y="226" width="365" height="42" rx="8" fill="none" stroke="var(--success)" />
+          <text x="216" y="244" text-anchor="middle" fill="var(--text)" font-size="10" font-weight="bold">Step 4: warranty_policy_specialist (24ms)</text>
+          <text x="216" y="260" text-anchor="middle" fill="var(--muted)" font-size="9">45k mi &lt;= 60k + 15 recalls &rarr; COVERED_UNDER_NHTSA_RECALL</text>
+          <line x1="216" y1="268" x2="216" y2="288" stroke="var(--success)" stroke-width="1.6" marker-end="url(#t1-d-arr-s)" />
+          <text x="226" y="281" fill="var(--success)" font-size="8.5" font-weight="bold">Steps 2+3+4 combined into Gemini prompt</text>
+          <rect x="34" y="290" width="365" height="44" rx="8" fill="none" stroke="var(--success)" stroke-width="1.6" />
+          <text x="216" y="309" text-anchor="middle" fill="var(--success)" font-size="10" font-weight="bold">Step 5: Synthesis + verify_diagnostic_contradictions (6ms)</text>
+          <text x="216" y="324" text-anchor="middle" fill="var(--muted)" font-size="9">Audits citations, FRP safety, 15 Nm units &rarr; Status: PASS</text>
+
+          <rect x="440" y="14" width="406" height="332" rx="12" fill="none" stroke="var(--success)" stroke-width="1.5" />
+          <text x="643" y="36" text-anchor="middle" fill="var(--success)" font-size="12" font-weight="bold">Pattern B: Native ADK (app/agent.py) — HUB-AND-SPOKE (Parallel Turn 1)</text>
+          <rect x="513" y="50" width="260" height="48" rx="10" fill="none" stroke="var(--primary)" stroke-width="1.8" />
+          <text x="643" y="70" text-anchor="middle" fill="var(--primary)" font-size="11" font-weight="bold">root_agent: dtc_diagnostics_agent</text>
+          <text x="643" y="87" text-anchor="middle" fill="var(--muted)" font-size="9">Gemini 3.8 Flash decides Turn 1 tool fanout</text>
+          <line x1="560" y1="98" x2="508" y2="142" stroke="var(--primary)" stroke-width="1.5" marker-end="url(#t1-d-arr-p)" />
+          <line x1="643" y1="98" x2="643" y2="142" stroke="var(--warning)" stroke-width="1.5" marker-end="url(#t1-d-arr-w)" />
+          <line x1="726" y1="98" x2="778" y2="142" stroke="var(--success)" stroke-width="1.5" marker-end="url(#t1-d-arr-s)" />
+          <text x="643" y="122" text-anchor="middle" fill="var(--text)" font-size="9" font-weight="bold">Turn 1: Parallel AgentTool Calls</text>
+          <rect x="452" y="146" width="116" height="72" rx="8" fill="none" stroke="var(--border)" />
+          <text x="510" y="164" text-anchor="middle" fill="var(--primary)" font-size="9.5" font-weight="bold">diagnostic_spec</text>
+          <text x="510" y="180" text-anchor="middle" fill="var(--muted)" font-size="8.5">TSB 21-2119 +</text>
+          <text x="510" y="193" text-anchor="middle" fill="var(--muted)" font-size="8.5">0.030" gap +</text>
+          <text x="510" y="206" text-anchor="middle" fill="var(--muted)" font-size="8.5">15 Nm / TTY 45°</text>
+          <rect x="585" y="146" width="116" height="72" rx="8" fill="none" stroke="var(--warning)" />
+          <text x="643" y="164" text-anchor="middle" fill="var(--warning)" font-size="9.5" font-weight="bold">recall_safety</text>
+          <text x="643" y="180" text-anchor="middle" fill="var(--muted)" font-size="8.5">Ford F-150 (15)</text>
+          <text x="643" y="193" text-anchor="middle" fill="var(--muted)" font-size="8.5">21V986000 +</text>
+          <text x="643" y="206" text-anchor="middle" fill="var(--muted)" font-size="8.5">ODI misfire hits</text>
+          <rect x="718" y="146" width="116" height="72" rx="8" fill="none" stroke="var(--success)" />
+          <text x="776" y="164" text-anchor="middle" fill="var(--success)" font-size="9.5" font-weight="bold">warranty_policy</text>
+          <text x="776" y="180" text-anchor="middle" fill="var(--muted)" font-size="8.5">5yr/60k In @ 45k</text>
+          <text x="776" y="193" text-anchor="middle" fill="var(--muted)" font-size="8.5">+ Ford 10-K</text>
+          <text x="776" y="206" text-anchor="middle" fill="var(--muted)" font-size="8.5">$4,782M (2.49%)</text>
+          <line x1="510" y1="218" x2="610" y2="256" stroke="var(--muted)" stroke-width="1.3" stroke-dasharray="3 2" />
+          <line x1="643" y1="218" x2="643" y2="254" stroke="var(--muted)" stroke-width="1.3" stroke-dasharray="3 2" />
+          <line x1="776" y1="218" x2="676" y2="256" stroke="var(--muted)" stroke-width="1.3" stroke-dasharray="3 2" />
+          <text x="643" y="244" text-anchor="middle" fill="var(--text)" font-size="9" font-weight="bold">Turn 2: Sequential Safety Gate</text>
+          <rect x="468" y="258" width="350" height="72" rx="10" fill="none" stroke="var(--success)" stroke-width="1.6" />
+          <text x="643" y="279" text-anchor="middle" fill="var(--success)" font-size="10.5" font-weight="bold">verify_diagnostic_contradictions() + Final Answer</text>
+          <text x="643" y="297" text-anchor="middle" fill="var(--muted)" font-size="9">Verifies TSB 21-2119 citation, FRP relief, and 15 Nm units</text>
+          <text x="643" y="314" text-anchor="middle" fill="var(--text)" font-size="9">Interactive via: agents-cli playground · uv run adk web</text>
+        </svg>
+
+        <div class="kpi-grid" style="margin-top:12px;">
+          <div class="subcard">
+            <strong style="color:var(--primary);">1. Why Turn 2 Waits (Sequential Gate)</strong>
+            <div class="muted" style="margin-top:4px;">The 3 dashed lines converge because Turn 1 specialists only collect manual, recall, and warranty facts. <code>root_agent</code> waits for all 3 responses to compose the P0300 draft before auditing it.</div>
+          </div>
+          <div class="subcard" style="border-color:var(--success);">
+            <strong style="color:var(--success);">2. verify_diagnostic_contradictions()</strong>
+            <div class="muted" style="margin-top:4px;">Audits the draft for (a) <code>TSB 21-2119</code> section citation, (b) pressurized fuel-rail relief warnings (FRP 2,150–2,900 PSI) or EV HV isolation, and (c) explicit torque units (<code>15 Nm</code>, <code>12 Nm + 45°</code>). Outputs <code>PASS</code> or appends missing safety notes.</div>
+          </div>
+          <div class="subcard">
+            <strong>3. Interactive ADK Debugging</strong>
+            <div class="muted" style="margin-top:4px;">Run <code>agents-cli playground</code> or <code>uv run adk web</code> to trace Turn 1's parallel <code>AgentTool</code> dispatches and Turn 2's contradiction gate live against <code>app/agent.py</code>.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-workflow" class="tab-panel hidden">
+      <div class="card">
+        <h2>Interactive 6-Stage Pipeline Walkthrough for DTC P0300</h2>
+        <p class="muted">Click any stage (1–6) to inspect verbatim scores, file implementations, and P0300 payloads.</p>
+        <div class="stage-grid">
+          <button type="button" data-stage="1" class="stage-btn active"><div style="color:var(--primary);font-weight:700;font-size:11px;">STAGE 1</div><strong>Entity Chunking</strong><div class="muted">ford-ecoboost-p0300</div></button>
+          <button type="button" data-stage="2" class="stage-btn"><div style="color:var(--primary);font-weight:700;font-size:11px;">STAGE 2</div><strong>Hybrid Stage-1</strong><div class="muted">3.713 vs 1.961</div></button>
+          <button type="button" data-stage="3" class="stage-btn"><div style="color:var(--primary);font-weight:700;font-size:11px;">STAGE 3</div><strong>Rerank &amp; Torque</strong><div class="muted">5.913 + 12 Nm + 45°</div></button>
+          <button type="button" data-stage="4" class="stage-btn"><div style="color:var(--primary);font-weight:700;font-size:11px;">STAGE 4</div><strong>ADK Specialists</strong><div class="muted">Recalls + 5yr/60k</div></button>
+          <button type="button" data-stage="5" class="stage-btn"><div style="color:var(--primary);font-weight:700;font-size:11px;">STAGE 5</div><strong>Self-Reflection</strong><div class="muted">PASS (FRP + 15 Nm)</div></button>
+          <button type="button" data-stage="6" class="stage-btn"><div style="color:var(--primary);font-weight:700;font-size:11px;">STAGE 6</div><strong>Report &amp; Ticket</strong><div class="muted">Gemini + Firestore</div></button>
+        </div>
+        <div id="stage-detail" class="subcard"></div>
+      </div>
+    </section>
+
+    <section id="tab-adk" class="tab-panel hidden">
+      <div class="card">
+        <h2>Live ADK Execution Trace &amp; Exact P0300 Tool Calls</h2>
+        <div class="grid-5" style="margin-top:12px;">
+          <div class="subcard" style="border-color:var(--primary);"><div style="display:flex;justify-content:space-between;font-family:monospace;font-size:12px;"><strong style="color:var(--primary);">Step 1</strong><span>0ms</span></div><strong>dtc_diagnostics_agent</strong><div class="muted">Parses Ford F-150 3.5L + P0300 &amp; delegates to 3 specialists.</div></div>
+          <div class="subcard"><div style="display:flex;justify-content:space-between;font-family:monospace;font-size:12px;"><strong style="color:var(--primary);">Step 2</strong><span>12ms</span></div><strong>diagnostic_specialist</strong><div class="muted">3 chunks (TSB 21-2119 Rank #1) &amp; 11 torque specs standardized.</div></div>
+          <div class="subcard"><div style="display:flex;justify-content:space-between;font-family:monospace;font-size:12px;"><strong style="color:var(--warning);">Step 3</strong><span>9ms</span></div><strong>recall_safety_specialist</strong><div class="muted">15 Ford F-150 NHTSA recalls (e.g. 21V986000) &amp; ODI complaints matched.</div></div>
+          <div class="subcard"><div style="display:flex;justify-content:space-between;font-family:monospace;font-size:12px;"><strong style="color:var(--success);">Step 4</strong><span>24ms</span></div><strong>warranty_policy_specialist</strong><div class="muted">45,000 mi / 5 yr &rarr; Powertrain In + Recall Override + 10-K.</div></div>
+          <div class="subcard" style="border-color:var(--success);"><div style="display:flex;justify-content:space-between;font-family:monospace;font-size:12px;"><strong style="color:var(--success);">Step 5</strong><span>6ms</span></div><strong>verify_contradictions</strong><div class="muted">OEM citation, fuel rail relief &amp; torque units &rarr; PASS.</div></div>
+        </div>
+
+        <div style="margin-top:16px;">
+          <div style="font-weight:700; font-size:13px; margin-bottom:8px;">Agent Workflow Diagram: Sequential REST API vs Hub-and-Spoke ADK (2021 Ford F-150 · P0300 @ 45,000 mi)</div>
+          <svg viewBox="0 0 860 360" style="width:100%; height:auto; border-radius:12px; border:1px solid var(--border); background:var(--content);">
+            <defs>
+              <marker id="d-arr-p" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="var(--primary)" /></marker>
+              <marker id="d-arr-s" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="var(--success)" /></marker>
+              <marker id="d-arr-w" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="var(--warning)" /></marker>
+            </defs>
+
+            <rect x="14" y="14" width="405" height="332" rx="12" fill="none" stroke="var(--primary)" stroke-width="1.5" />
+            <text x="216" y="36" text-anchor="middle" fill="var(--primary)" font-size="12" font-weight="bold">Pattern A: Express / FastAPI REST (POST /api/adk/run) — SEQUENTIAL</text>
+
+            <rect x="34" y="48" width="365" height="40" rx="8" fill="none" stroke="var(--border)" />
+            <text x="216" y="65" text-anchor="middle" fill="var(--text)" font-size="10" font-weight="bold">Step 1: Intake Parser (dtc_diagnostics_agent · 0ms)</text>
+            <text x="216" y="80" text-anchor="middle" fill="var(--muted)" font-size="9">Input: Ford | F-150 EcoBoost 3.5L | 2021 | P0300 | 45,000 mi</text>
+            <line x1="216" y1="88" x2="216" y2="104" stroke="var(--primary)" stroke-width="1.6" marker-end="url(#d-arr-p)" />
+
+            <rect x="34" y="106" width="365" height="40" rx="8" fill="none" stroke="var(--border)" />
+            <text x="216" y="123" text-anchor="middle" fill="var(--text)" font-size="10" font-weight="bold">Step 2: diagnostic_specialist (12ms)</text>
+            <text x="216" y="138" text-anchor="middle" fill="var(--muted)" font-size="9">Finds TSB 21-2119 (Rank #1) + converts 15 Nm &amp; 12 Nm+45° TTY</text>
+            <line x1="216" y1="146" x2="216" y2="162" stroke="var(--primary)" stroke-width="1.6" marker-end="url(#d-arr-p)" />
+
+            <rect x="34" y="164" width="365" height="40" rx="8" fill="none" stroke="var(--warning)" />
+            <text x="216" y="181" text-anchor="middle" fill="var(--text)" font-size="10" font-weight="bold">Step 3: recall_safety_specialist (9ms)</text>
+            <text x="216" y="196" text-anchor="middle" fill="var(--muted)" font-size="9">Finds 15 Ford F-150 Recalls (21V986000, 21V090000) &amp; ODI rows</text>
+            <line x1="216" y1="204" x2="216" y2="224" stroke="var(--success)" stroke-width="1.6" marker-end="url(#d-arr-s)" />
+            <text x="226" y="217" fill="var(--success)" font-size="8.5" font-weight="bold">Passes 15 recalls &rarr; Recall Override check</text>
+
+            <rect x="34" y="226" width="365" height="42" rx="8" fill="none" stroke="var(--success)" />
+            <text x="216" y="244" text-anchor="middle" fill="var(--text)" font-size="10" font-weight="bold">Step 4: warranty_policy_specialist (24ms)</text>
+            <text x="216" y="260" text-anchor="middle" fill="var(--muted)" font-size="9">45k mi &lt;= 60k + 15 recalls &rarr; COVERED_UNDER_NHTSA_RECALL</text>
+            <line x1="216" y1="268" x2="216" y2="288" stroke="var(--success)" stroke-width="1.6" marker-end="url(#d-arr-s)" />
+            <text x="226" y="281" fill="var(--success)" font-size="8.5" font-weight="bold">Steps 2+3+4 combined into Gemini prompt</text>
+
+            <rect x="34" y="290" width="365" height="44" rx="8" fill="none" stroke="var(--success)" stroke-width="1.6" />
+            <text x="216" y="309" text-anchor="middle" fill="var(--success)" font-size="10" font-weight="bold">Step 5: Synthesis + verify_diagnostic_contradictions (6ms)</text>
+            <text x="216" y="324" text-anchor="middle" fill="var(--muted)" font-size="9">Audits citations, FRP safety, 15 Nm units &rarr; Status: PASS</text>
+
+            <rect x="440" y="14" width="406" height="332" rx="12" fill="none" stroke="var(--success)" stroke-width="1.5" />
+            <text x="643" y="36" text-anchor="middle" fill="var(--success)" font-size="12" font-weight="bold">Pattern B: Native ADK (app/agent.py) — HUB-AND-SPOKE (Parallel Turn 1)</text>
+
+            <rect x="513" y="50" width="260" height="48" rx="10" fill="none" stroke="var(--primary)" stroke-width="1.8" />
+            <text x="643" y="70" text-anchor="middle" fill="var(--primary)" font-size="11" font-weight="bold">root_agent: dtc_diagnostics_agent</text>
+            <text x="643" y="87" text-anchor="middle" fill="var(--muted)" font-size="9">Gemini 3.8 Flash decides Turn 1 tool fanout</text>
+
+            <line x1="560" y1="98" x2="508" y2="142" stroke="var(--primary)" stroke-width="1.5" marker-end="url(#d-arr-p)" />
+            <line x1="643" y1="98" x2="643" y2="142" stroke="var(--warning)" stroke-width="1.5" marker-end="url(#d-arr-w)" />
+            <line x1="726" y1="98" x2="778" y2="142" stroke="var(--success)" stroke-width="1.5" marker-end="url(#d-arr-s)" />
+            <text x="643" y="122" text-anchor="middle" fill="var(--text)" font-size="9" font-weight="bold">Turn 1: Parallel AgentTool Calls</text>
+
+            <rect x="452" y="146" width="116" height="72" rx="8" fill="none" stroke="var(--border)" />
+            <text x="510" y="164" text-anchor="middle" fill="var(--primary)" font-size="9.5" font-weight="bold">diagnostic_spec</text>
+            <text x="510" y="180" text-anchor="middle" fill="var(--muted)" font-size="8.5">TSB 21-2119 +</text>
+            <text x="510" y="193" text-anchor="middle" fill="var(--muted)" font-size="8.5">0.030" gap +</text>
+            <text x="510" y="206" text-anchor="middle" fill="var(--muted)" font-size="8.5">15 Nm / TTY 45°</text>
+
+            <rect x="585" y="146" width="116" height="72" rx="8" fill="none" stroke="var(--warning)" />
+            <text x="643" y="164" text-anchor="middle" fill="var(--warning)" font-size="9.5" font-weight="bold">recall_safety</text>
+            <text x="643" y="180" text-anchor="middle" fill="var(--muted)" font-size="8.5">Ford F-150 (15)</text>
+            <text x="643" y="193" text-anchor="middle" fill="var(--muted)" font-size="8.5">21V986000 +</text>
+            <text x="643" y="206" text-anchor="middle" fill="var(--muted)" font-size="8.5">ODI misfire hits</text>
+
+            <rect x="718" y="146" width="116" height="72" rx="8" fill="none" stroke="var(--success)" />
+            <text x="776" y="164" text-anchor="middle" fill="var(--success)" font-size="9.5" font-weight="bold">warranty_policy</text>
+            <text x="776" y="180" text-anchor="middle" fill="var(--muted)" font-size="8.5">5yr/60k In @ 45k</text>
+            <text x="776" y="193" text-anchor="middle" fill="var(--muted)" font-size="8.5">+ Ford 10-K</text>
+            <text x="776" y="206" text-anchor="middle" fill="var(--muted)" font-size="8.5">$4,782M (2.49%)</text>
+
+            <line x1="510" y1="218" x2="610" y2="256" stroke="var(--muted)" stroke-width="1.3" stroke-dasharray="3 2" />
+            <line x1="643" y1="218" x2="643" y2="254" stroke="var(--muted)" stroke-width="1.3" stroke-dasharray="3 2" />
+            <line x1="776" y1="218" x2="676" y2="256" stroke="var(--muted)" stroke-width="1.3" stroke-dasharray="3 2" />
+            <text x="643" y="244" text-anchor="middle" fill="var(--text)" font-size="9" font-weight="bold">Turn 2: Sequential Safety Gate</text>
+
+            <rect x="468" y="258" width="350" height="72" rx="10" fill="none" stroke="var(--success)" stroke-width="1.6" />
+            <text x="643" y="279" text-anchor="middle" fill="var(--success)" font-size="10.5" font-weight="bold">verify_diagnostic_contradictions() + Final Answer</text>
+            <text x="643" y="297" text-anchor="middle" fill="var(--muted)" font-size="9">Verifies TSB 21-2119 citation, FRP relief, and 15 Nm units</text>
+            <text x="643" y="314" text-anchor="middle" fill="var(--text)" font-size="9">Interactive UI via: agents-cli playground · uv run adk web</text>
+          </svg>
+        </div>
+        <div class="grid-2" style="margin-top:14px;">
+          <div class="subcard" style="border-color:var(--primary);">
+            <strong style="color:var(--primary);">Are <code>root_agent</code> and <code>dtc_diagnostics_agent</code> the Same?</strong>
+            <div class="muted" style="margin-top:4px;"><strong>Yes — exact same agent:</strong> <code>root_agent</code> is the Python variable name required by Google ADK CLI discovery (<code>root_agent = coordinator_agent</code> in <code>app/agent.py</code>), while <code>"dtc_diagnostics_agent"</code> is that agent's <code>name</code> property displayed in traces, <code>agents-cli-manifest.yaml</code>, and <code>/.well-known/agent-card.json</code>.</div>
+          </div>
+          <div class="subcard" style="border-color:var(--warning);">
+            <strong style="color:var(--warning);">Why Show NHTSA Safety Recalls During Triage? (4 Benefits)</strong>
+            <ul style="font-size:12px; color:var(--muted); margin-top:4px;">
+              <li><strong>$0 Recall Cost Override:</strong> No mileage/age expiration—flags <code>Recall Override: YES</code> for OEM billing.</li>
+              <li><strong>Countermeasure Awareness:</strong> Prevents replacing parts with defective original hardware/software.</li>
+              <li><strong>Open Bay Campaign Check:</strong> Catches open safety recalls (e.g. <code>21V986000</code>, <code>21V533000</code>) during P0300 service.</li>
+              <li><strong>Manufacturer-Matched Loader:</strong> <code>ingest/nhtsa_loader.py</code> uses <code>recallsByVehicle</code> (90 OEM-matched rows, 15 Ford F-150 campaigns) so Ford inputs never show cross-OEM recalls.</li>
+            </ul>
+          </div>
+        </div>
+        <div style="margin-top:16px;">
+          <div style="font-weight:700; font-size:12px; margin-bottom:8px;">Inspect Exact P0300 Tool Arguments &amp; Output:</div>
+          <div class="tabs" id="tool-tabs">
+            <button type="button" data-tool="search_workshop_manuals" class="tool-btn active">search_workshop_manuals</button>
+            <button type="button" data-tool="convert_fastener_torque" class="tool-btn">convert_fastener_torque</button>
+            <button type="button" data-tool="lookup_nhtsa_recalls" class="tool-btn">lookup_nhtsa_recalls</button>
+            <button type="button" data-tool="lookup_nhtsa_complaints" class="tool-btn">lookup_nhtsa_complaints</button>
+            <button type="button" data-tool="evaluate_warranty_coverage" class="tool-btn">evaluate_warranty_coverage</button>
+            <button type="button" data-tool="verify_diagnostic_contradictions" class="tool-btn">verify_diagnostic_contradictions</button>
+          </div>
+          <div id="tool-detail" class="subcard" style="margin-top:10px;"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-modules" class="tab-panel hidden">
+      <div class="card">
+        <h2>How Every One of the 11 Modules Handles DTC P0300</h2>
+        <div class="grid-2" style="margin-top:12px;">
+          <div class="subcard"><strong>1. DTC Diagnostics (<code>/api/rag/query</code>, <code>/api/adk/run</code>)</strong><div class="muted">Select preset <strong>Ford EcoBoost P0300</strong> + <code>42000 mi</code>. Returns <code>TSB 21-2119</code> diagnosis, Spark Plugs <code>15 Nm (133 lb-in)</code>, Coil Bolts <code>10 Nm (89 lb-in)</code>, 0.030 in gap rule, 5-step trace, and warranty verdict.</div></div>
+          <div class="subcard"><strong>2. OEM Shop Manuals (<code>/api/rag/manuals</code>)</strong><div class="muted">Filter <code>P0300</code> to compare Ford vs GM chunks, edit torque specs in-place, or ingest PDFs via <code>/api/rag/upload-manual</code> into <code>custom_manuals.json</code>.</div></div>
+          <div class="subcard"><strong>3. NHTSA Recalls &amp; 10-K Warranty (<code>/api/nhtsa/*</code>)</strong><div class="muted">15 Ford F-150 recalls; semantic cluster <code>cluster_turbo_oil_burn</code> maps <code>P0299/P0300</code> to <code>TSB 21-2119</code>; SEC 10-K cites Ford <code>$4,782.0M</code> (<code>2.49%</code> of revenue) driven by EcoBoost cam phasers.</div></div>
+          <div class="subcard"><strong>4. Technician Chat (<code>POST /api/chat</code>)</strong><div class="muted">ASE Master Tech persona with dynamic per-turn RAG injection (<code>+1.5</code> DTC / <code>+0.8</code> Make boost) &amp; turn-alternation sanitizer. Injects <code>TSB 21-2119</code> context and returns cam phaser + <code>15 Nm</code> plug + <code>12 Nm + 45°</code> HPFP guidance.</div></div>
+          <div class="subcard"><strong>5. Service &amp; Parts Maps (<code>/api/grounding/*</code>)</strong><div class="muted">Gemini <code>googleSearch</code> (<code>webSources[]</code>) for Motorcraft SP-580 parts/TSB checks and <code>googleMaps</code> + shop <code>latLng</code> (<code>mapSources[]</code>) for nearby Ford VCT calibration bays.</div></div>
+          <div class="subcard"><strong>6. Multimodal Lab (<code>POST /api/generate</code>)</strong><div class="muted">Inspect borescope photos of carbon buildup or fouled spark plugs to evaluate electrode erosion &gt; 0.030 in.</div></div>
+          <div class="subcard"><strong>7. 3D Powertrain Lab (Three.js)</strong><div class="muted">Interactive 3D inspection of coil packs, twin-turbo charge path, direct injectors, and VCT phasers tied to P0300 failure points.</div></div>
+          <div class="subcard"><strong>8. Repair Video Studio (<code>POST /api/video/generate</code>)</strong><div class="muted">Two-tier generator (<code>gemini-omni-1.1-flash</code> MP4 or <code>gemini-3.8-flash</code> RAG-grounded 4-scene JSON storyboard) rendered on a 60fps HTML5 <code>&lt;canvas&gt;</code> HUD for P0300 verification.</div></div>
+          <div class="subcard"><strong>9. Quotas &amp; Models (<code>GET /api/status</code>)</strong><div class="muted">Logs <code>+650</code> (Single-Pass RAG) vs <code>+850</code> (ADK Triage) units across <code>gemini-3.8-flash</code> and <code>gemini-3.1-flash-lite</code> failover.</div></div>
+          <div class="subcard"><strong>10. SDK &amp; SQL Export (<code>CodeExport.tsx</code>)</strong><div class="muted">Exports TypeScript, Python GenAI, Python Google ADK (<code>app/agent.py</code>), and BigQuery <code>VECTOR_SEARCH</code> SQL for <code>Ford F-150 EcoBoost P0300</code>.</div></div>
+          <div class="subcard" style="grid-column:1 / -1;"><strong>11. GCP CLI &amp; IAM (<code>SetupGuide.tsx</code>)</strong><div class="muted">Configures least-privilege Vertex AI ADC credentials for project <code>my-project-2026-514503</code> in <code>location: global</code> and BigQuery Data Viewer IAM roles.</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Module Deep-Dive: Technician Chat, Service &amp; Parts Maps &amp; Repair Video Studio</h2>
+        <p class="muted" style="margin-bottom:14px;">Backend endpoints, RAG/grounding pipelines, Vertex AI failover behavior, and concrete <code>2021 Ford F-150 P0300</code> walkthroughs (<code>server.ts</code>, <code>ChatPlayground.tsx</code>, <code>GroundingExplorer.tsx</code>, <code>VideoStudio.tsx</code>).</p>
+
+        <div class="subcard" style="margin-bottom:12px;">
+          <strong>Module 4 · Technician Chat (<code>POST /api/chat</code> · <code>server.ts L379–568</code> · +450 quota units · In-Session Replay Memory)</strong>
+          <div class="grid-2" style="margin-top:8px;">
+            <div class="muted">
+              <ul style="margin:0; padding-left:16px;">
+                <li><strong>ASE Persona (<code>defaultTechnicianInstruction</code>):</strong> Pre-grounded in active OEM manuals (<code>Ford F-150 P0300</code>, <code>Toyota P0A80</code>, <code>Tesla BMS_a027</code>, <code>BMW 120308</code>, <code>Chevy P0521</code>, <code>B00A0</code>, uploaded PDFs).</li>
+                <li><strong>Per-Turn Dynamic RAG Injection:</strong> Checks automotive keywords (<code>manual</code>, <code>dtc</code>, <code>p0</code>, <code>torque</code>, <code>ford</code>, <code>repair</code>, etc.), scores <code>activeManualChunks</code> via <code>lexicalScore + 1.5 (DTC) + 0.8 (Make)</code>, and appends top 2 chunks (<code>[RETRIEVED WORKSHOP MANUAL CONTEXT FROM RAG ENGINE]</code> + <code>torqueSpecs</code>) to the user turn.</li>
+                <li><strong>Turn Alternation Sanitizer:</strong> Strips leading model greetings so Gemini <code>contents</code> starts with <code>role: 'user'</code>, merges consecutive identical roles, and calls <code>gemini-3.8-flash</code> with <code>gemini-3.1-flash-lite</code> + deterministic offline failover.</li>
+              </ul>
+            </div>
+            <div>
+              <pre style="margin:0;">Tech Prompt: "Customer hears a 3-second cold-start rattle on a 2021 Ford F-150 with P0300—what is the cause and fastener torque?"
+RAG Match : ford-ecoboost-p0300 (+1.5 P0300, +0.8 Ford) -> TSB 21-2119
+Reply     : VCT intake cam phaser locking-pin wear (P0016/P0300)
+            Plugs: 15 Nm (133 lb-in) | Coils: 10 Nm (89 lb-in)
+            Manifold: 10 Nm cross | HPFP TTY: 12 Nm + 45°</pre>
+            </div>
+          </div>
+
+          <div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--border);">
+            <strong style="font-size:12px;">Conversation Memory Architecture (Client React State ↔ Stateless Backend Replay):</strong>
+            <div class="grid-2" style="margin-top:6px;">
+              <div class="muted">
+                <ul style="margin:0; padding-left:16px;">
+                  <li><strong>Client Session Memory (<code>ChatPlayground.tsx L53–171</code>):</strong> Stores turns in React <code>messages</code> state and replays prior turns in <code>history</code> (excluding static greeting <code>id === '1'</code>) on every <code>POST /api/chat</code> request.</li>
+                  <li><strong>Editable &amp; Prunable History:</strong> Supports editing past turns (<code>handleSaveEditMessage</code>), deleting single turns (<code>handleDeleteMessage</code>), and clearing context (<code>handleClear</code>).</li>
+                </ul>
+              </div>
+              <div class="muted">
+                <ul style="margin:0; padding-left:16px;">
+                  <li><strong>Backend Sanitization (<code>server.ts L462–509</code>):</strong> Drops leading assistant greetings, merges consecutive same-role messages (preserving valid Gemini alternation after deletes), and injects RAG chunks only into the current turn so stored UI history stays unbloated.</li>
+                  <li><strong>No Cross-Reload Chat DB:</strong> Unmounts when switching away from <code>activeModule === 'chat'</code> (<code>AutoServiceRag.tsx L2866</code>) and clears on reload (<code>F5</code>).</li>
+                </ul>
+              </div>
+            </div>
+            <table style="width:100%; border-collapse:collapse; margin-top:8px; font-size:11px;">
+              <thead>
+                <tr style="border-bottom:1px solid var(--border); text-align:left; color:var(--muted);">
+                  <th style="padding:4px 6px;">Memory Type</th>
+                  <th style="padding:4px 6px;">Where It Lives</th>
+                  <th style="padding:4px 6px;">Survives Tab Switch?</th>
+                  <th style="padding:4px 6px;">Survives Reload (<code>F5</code>)?</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr style="border-bottom:1px solid var(--border);">
+                  <td style="padding:4px 6px;"><strong>Chat History (<code>messages</code>)</strong></td>
+                  <td style="padding:4px 6px;">React state in <code>ChatPlayground.tsx</code></td>
+                  <td style="padding:4px 6px;"><strong>No</strong> (unmounts on tab switch)</td>
+                  <td style="padding:4px 6px;"><strong>No</strong></td>
+                </tr>
+                <tr style="border-bottom:1px solid var(--border);">
+                  <td style="padding:4px 6px;"><strong>OEM Manuals (<code>activeManualChunks</code>)</strong></td>
+                  <td style="padding:4px 6px;">Server memory + <code>data/custom_manuals.json</code></td>
+                  <td style="padding:4px 6px;"><strong>Yes</strong></td>
+                  <td style="padding:4px 6px;"><strong>Yes</strong> (disk JSON)</td>
+                </tr>
+                <tr>
+                  <td style="padding:4px 6px;"><strong>Saved Tickets (<code>savedTickets</code>)</strong></td>
+                  <td style="padding:4px 6px;">Firestore + <code>localStorage</code> (<code>AutoServiceRag.tsx</code>)</td>
+                  <td style="padding:4px 6px;"><strong>Yes</strong></td>
+                  <td style="padding:4px 6px;"><strong>Yes</strong></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="subcard" style="margin-bottom:12px;">
+          <strong>Module 5 · Service &amp; Parts Maps (<code>POST /api/grounding/search</code> &amp; <code>/maps</code> · <code>server.ts L571–691</code>)</strong>
+          <div class="grid-2" style="margin-top:8px;">
+            <div class="muted">
+              <ul style="margin:0; padding-left:16px;">
+                <li><strong>Google Search Grounding (<code>/api/grounding/search</code>, +500 units):</strong> Calls <code>gemini-3.8-flash</code> with <code>tools: [{ googleSearch: {} }]</code>; extracts <code>groundingMetadata.groundingChunks[].web</code> into <code>webSources[]</code> citations (OEM part numbers, TSB updates, live stock).</li>
+                <li><strong>Google Maps Grounding (<code>/api/grounding/maps</code>, +550 units):</strong> Calls <code>gemini-3.8-flash</code> with <code>tools: [{ googleMaps: {} }]</code> + optional <code>toolConfig.retrievalConfig.latLng</code>; maps <code>chunk.maps.uri</code>, <code>title</code>, and <code>reviewSnippets</code> into interactive <code>mapSources[]</code> cards.</li>
+              </ul>
+            </div>
+            <div>
+              <pre style="margin:0;">Maps Query  : "Ford dealership service department with VCT camshaft phaser calibration &amp; Motorcraft SP-580 plugs" + shop latLng
+Search Query: "Ford TSB 21-2119 updated HL3Z-6C525-CD cam phaser kit"
+Output      : Grounded Google Maps dealer bays (mapSources[]) + verified supplier/TSB web links (webSources[])</pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="subcard">
+          <strong>Module 8 · Repair Video Studio (<code>POST /api/video/generate</code> · <code>server.ts L694–880</code> &amp; <code>VideoStudio.tsx</code> · +1500 units)</strong>
+          <div class="grid-2" style="margin-top:8px;">
+            <div class="muted">
+              <ul style="margin:0; padding-left:16px;">
+                <li><strong>Dual Modes &amp; Framing:</strong> Supports <strong>Generate from Text</strong> and <strong>Animate Image</strong> (uploaded bay/plug photo), <code>16:9</code> (<code>720×405</code>) or <code>9:16</code> (<code>405×720</code>), and <code>5s</code> / <code>10s</code> durations.</li>
+                <li><strong>Tier 1 (Native MP4):</strong> Attempts <code>ai.interactions.create({ model: 'gemini-omni-1.1-flash', response_format: { type: 'video', aspect_ratio, duration, resolution: '720p' } })</code> for native <code>&lt;video&gt;</code> playback.</li>
+                <li><strong>Tier 2 (Vertex AI <code>gemini-3.8-flash</code> Storyboard + 60fps Canvas HUD):</strong> Regex-extracts DTC codes, fetches top 2 OEM manuals via <code>retrieveAndRerankManuals()</code>, generates a 4-scene JSON <code>storyboard</code>, and renders a 60fps HTML5 <code>&lt;canvas&gt;</code> HUD with live green sinusoidal waveform, emerald telemetry pill, yellow torque/pass strip, and <code>3500ms</code> auto-advance Scene 1–4 controls.</li>
+              </ul>
+            </div>
+            <div>
+              <pre style="margin:0;">Prompt: "how to verify if P0300 dtc is fixed or not" (WSM 303-07A / TSB 21-2119)
+Scene 1: Ignition Plug Gap &amp; Torque   -> 0.030 in (0.76 mm) | 15 Nm / 10 Nm
+Scene 2: Cold-Start VCT Phaser Check  -> Deviation: 0.0° / 0.0 sec rattle
+Scene 3: Fuel Rail Pressure Sweep     -> 2,150 PSI Idle / 2,900 PSI WOT
+Scene 4: Mode $06 Drive Cycle Check   -> 0 Misfire Counts (Cyl 1-6), MIL Off</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-operations" class="tab-panel hidden">
+      <div class="grid-2">
+        <div class="card">
+          <h2>Captured Live Request &amp; Response (<code>POST /api/adk/run</code>)</h2>
+          <pre>{
+  "vehicleMake": "Ford",
+  "vehicleModel": "F-150 EcoBoost 3.5L",
+  "vehicleYear": "2021",
+  "engine": "3.5L Twin-Turbo V6",
+  "dtcCode": "P0300",
+  "mileage": 42000,
+  "symptoms": "Intermittent bucking under boost, flashing CEL above 45 MPH."
+}</pre>
+          <pre>{
+  "model": "gemini-3.1-flash-lite",
+  "elapsedMs": 10740,
+  "sourcesCited": [
+    "TSB 21-2119 / WSM 303-07A: Ignition System & Random Misfire (DTC P0300 / P0302)",
+    "GM TSB 21-NA-199 / PIP5553: DTC P050D / P0300: Cold Start Rough Idle...",
+    "OEM-W205-CAN: Mercedes C-Class W205 High-Speed Bus & Gateway Diagnostic Tree"
+  ],
+  "warrantyAssessment": {
+    "vehicle": "2021 Ford F-150 EcoBoost 3.5L",
+    "estimatedAgeYears": 5,
+    "mileage": 42000,
+    "verdict": "COVERED_UNDER_NHTSA_RECALL_OR_CHECK_VIN",
+    "coverageTiers": {
+      "bumperToBumper3yr36k": false,
+      "powertrain5yr60k": true,
+      "hvBatteryOrEmissions8yr100k": false,
+      "safetyRecallOverrideCandidate": true
+    },
+    "matchingRecallCount": 15
+  },
+  "selfReflection": { "status": "PASS", "findings": [], "verifiedChecks": [ "..." ] }
+}</pre>
+        </div>
+        <div class="card">
+          <h2>Watchdog Behavior on Code vs P0300 Data Updates</h2>
+          <div class="subcard" style="border-color:var(--primary); margin-bottom:10px;">
+            <strong style="color:var(--primary);">Edit Code/Config (<code>server.ts</code>, <code>app/agent.py</code>, <code>.env</code>)</strong>
+            <div class="muted" style="margin-top:4px;">SHA-256 hash changes across 56 watched files &rarr; 1.2s debounce &rarr; kills process tree &amp; clears port 3000 &rarr; restarts automatically (running <code>bun install --backend=copyfile</code> first if <code>package.json</code> changed).</div>
+          </div>
+          <div class="subcard" style="border-color:var(--success); margin-bottom:10px;">
+            <strong style="color:var(--success);">Edit Shop Manual in UI (<code>custom_manuals.json</code>)</strong>
+            <div class="muted" style="margin-top:4px;"><code>custom_manuals.json</code> and <code>data/*.json</code> are excluded from the watcher hash, so updating P0300 shop manuals or NHTSA caches never interrupts your active browser session.</div>
+          </div>
+          <pre>.\restart_app.bat --check
+.\restart_app.bat
+agents-cli playground
+uv run adk web</pre>
+          <div class="subcard" style="border-color:var(--primary); margin-top:10px;">
+            <strong style="color:var(--primary);">Hybrid Ticket Save (Firestore + Local) &amp; UI Panel Controls</strong>
+            <ul style="font-size:12px; color:var(--muted); margin-top:4px;">
+              <li><strong>Save to Firestore (<code>AutoServiceRag.tsx</code>):</strong> Always persists immediately to <strong>Saved Diagnostic Tickets</strong> + <code>localStorage</code> (<code>auto_service_local_tickets</code>), and syncs with <code>docRef.id</code> to Cloud Firestore (<code>autoServiceTickets</code>) when signed in with Google (sorted client-side, no composite index needed).</li>
+              <li><strong>Unhide Left Chart Panel:</strong> Click <strong>Live Chart Panel: ON / OFF</strong> in the top-right banner beside <em>GCP CLI &amp; IAM</em>.</li>
+              <li><strong>Full-Width Unclipped Cards:</strong> Container widened to <code>max-w-[1600px]</code> with wrapping badges and full self-reflection text.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-charts" class="tab-panel hidden">
+      <div class="card">
+        <h2>Live Left-Panel Inspector (<code>LiveArchitectureLeftPanel.tsx</code>) &amp; System Charts</h2>
+        <p class="muted" style="font-size:13px;">Mounted on the left (<code>lg:col-span-4 sticky</code>) inside <code>AutoServiceRag.tsx</code> across all 11 studio modules (toggled by <strong>Live Chart Panel: ON/OFF</strong>). Displays live-updating charts from <code>result.rerankLog</code>, <code>result.adkTrace</code>, <code>custom_manuals.json</code> count, <code>warrantyAssessment</code>, and <code>convertedTorque</code>.</p>
+        <div class="grid-2" style="margin-top:14px;">
+          <div class="subcard">
+            <h3>Chart 1: 2-Stage RAG Scores (P0300 Live Query)</h3>
+            <div style="font-size:12px; margin-bottom:8px;">
+              <span style="color:var(--primary); font-weight:700;">&#9632; Stage-1 Hybrid</span> &nbsp;
+              <span style="color:var(--success); font-weight:700;">&#9632; Stage-2 Deep Rerank</span>
+            </div>
+            <div style="margin-bottom:10px; font-family:monospace; font-size:12px;">
+              <div style="display:flex;justify-content:space-between;"><strong>#1 TSB 21-2119 (Ford)</strong><span>3.713 &rarr; 5.913</span></div>
+              <div style="height:7px;border:1px solid var(--border);border-radius:99px;overflow:hidden;margin:3px 0;"><div style="width:63%;height:100%;background:var(--primary);"></div></div>
+              <div style="height:9px;border:1px solid var(--border);border-radius:99px;overflow:hidden;"><div style="width:100%;height:100%;background:var(--success);"></div></div>
+              <div class="muted" style="color:var(--success);">Make &#10003; · Model &#10003; · Year(2021) &#10003; · DTC(P0300) &#10003;</div>
+            </div>
+            <div style="margin-bottom:10px; font-family:monospace; font-size:12px;">
+              <div style="display:flex;justify-content:space-between;"><strong>#2 GM TSB 21-NA-199 (Chevy)</strong><span>1.961 &rarr; 3.661</span></div>
+              <div style="height:7px;border:1px solid var(--border);border-radius:99px;overflow:hidden;margin:3px 0;"><div style="width:33%;height:100%;background:var(--primary);"></div></div>
+              <div style="height:9px;border:1px solid var(--border);border-radius:99px;overflow:hidden;"><div style="width:62%;height:100%;background:var(--success);"></div></div>
+            </div>
+            <div style="font-family:monospace; font-size:12px;">
+              <div style="display:flex;justify-content:space-between;"><strong>#3 OEM-W205-CAN (Mercedes)</strong><span>0.729 &rarr; 1.429</span></div>
+              <div style="height:7px;border:1px solid var(--border);border-radius:99px;overflow:hidden;margin:3px 0;"><div style="width:12%;height:100%;background:var(--primary);"></div></div>
+              <div style="height:9px;border:1px solid var(--border);border-radius:99px;overflow:hidden;"><div style="width:24%;height:100%;background:var(--success);"></div></div>
+            </div>
+          </div>
+
+          <div class="subcard">
+            <h3>Chart 2: Domain-Aware Chunking vs Naive Fixed Tokens</h3>
+            <div style="font-size:12px; margin-bottom:8px;">
+              <span style="color:var(--primary); font-weight:700;">&#9632; Entity Lock</span> &nbsp;
+              <span style="color:var(--error); font-weight:700;">&#9632; Naive Split</span>
+            </div>
+            <div style="font-family:monospace; font-size:12px; display:flex; flex-direction:column; gap:8px;">
+              <div><div style="display:flex;justify-content:space-between;"><span>Torque-to-Step Retention</span><strong>100% vs 38%</strong></div><div style="height:8px;border:1px solid var(--border);border-radius:99px;overflow:hidden;"><div style="width:100%;height:100%;background:var(--primary);"></div></div><div style="height:6px;border:1px solid var(--border);border-radius:99px;overflow:hidden;margin-top:2px;"><div style="width:38%;height:100%;background:var(--error);"></div></div></div>
+              <div><div style="display:flex;justify-content:space-between;"><span>Cross-OEM Misfire Isolation</span><strong>98% vs 44%</strong></div><div style="height:8px;border:1px solid var(--border);border-radius:99px;overflow:hidden;"><div style="width:98%;height:100%;background:var(--primary);"></div></div><div style="height:6px;border:1px solid var(--border);border-radius:99px;overflow:hidden;margin-top:2px;"><div style="width:44%;height:100%;background:var(--error);"></div></div></div>
+              <div><div style="display:flex;justify-content:space-between;"><span>Generation Year Bound</span><strong>100% vs 52%</strong></div><div style="height:8px;border:1px solid var(--border);border-radius:99px;overflow:hidden;"><div style="width:100%;height:100%;background:var(--primary);"></div></div><div style="height:6px;border:1px solid var(--border);border-radius:99px;overflow:hidden;margin-top:2px;"><div style="width:52%;height:100%;background:var(--error);"></div></div></div>
+              <div><div style="display:flex;justify-content:space-between;"><span>Safety Lockout Preservation</span><strong>100% vs 41%</strong></div><div style="height:8px;border:1px solid var(--border);border-radius:99px;overflow:hidden;"><div style="width:100%;height:100%;background:var(--primary);"></div></div><div style="height:6px;border:1px solid var(--border);border-radius:99px;overflow:hidden;margin-top:2px;"><div style="width:41%;height:100%;background:var(--error);"></div></div></div>
+            </div>
+            <div style="margin-top:12px; padding:10px; border-radius:10px; border:1px solid var(--border); background:var(--card); font-size:12px;">
+              <strong style="color:var(--primary);">Note: Chunk Size &amp; Percentage Meaning</strong>
+              <div class="muted" style="margin-top:4px;">
+                <strong>Naive Chunking (500-token sliding window, NOT random):</strong> Cuts strictly every 500 tokens sequentially (Tokens 1–500 &rarr; Chunk 1, 451–950 &rarr; Chunk 2 with 50-token overlap) regardless of meaning, detaching torque tables and Page-1 warnings. <strong>This App (<code>ingest/chunker.py</code>):</strong> Splits at <code>\n\n</code> paragraph boundaries (<code>max_chunk_tokens=600</code>, <code>overlap_tokens=80</code>, <code>len(p)//4</code>) and inherits full-section <code>dtc_codes</code>, <code>torque_specs</code>, and <code>WARNING</code> blocks on lines 81–108 across every sub-chunk.
+              </div>
+              <ul style="margin-top:6px; color:var(--muted);">
+                <li><strong>100% vs 38%:</strong> % of retrieved repair chunks that retain factory fastener torque specs.</li>
+                <li><strong>98% vs 44%:</strong> Precision isolating Ford <code>P0300</code> from Chevy <code>P0300</code> via OEM metadata tags.</li>
+                <li><strong>100% vs 52%:</strong> Generation-year match accuracy via <code>isYearInRange()</code>.</li>
+                <li><strong>100% vs 41%:</strong> Safety lockout notice retention across sub-chunks. <em>(Benchmark metrics comparing architectures; Charts 1 &amp; 3 compute live per query.)</em></li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="subcard">
+            <h3>Chart 3: ADK Multi-Agent Step Latency (P0300 Run)</h3>
+            <div style="font-family:monospace; font-size:12px; display:flex; flex-direction:column; gap:7px;">
+              <div><div style="display:flex;justify-content:space-between;"><span>Step 1: dtc_diagnostics_agent (Delegate)</span><span>0ms</span></div><div style="height:7px;border:1px solid var(--border);border-radius:99px;"><div style="width:6%;height:100%;background:var(--success);border-radius:99px;"></div></div></div>
+              <div><div style="display:flex;justify-content:space-between;"><span>Step 2: diagnostic_specialist (3 chunks, 11 torques)</span><span>12ms</span></div><div style="height:7px;border:1px solid var(--border);border-radius:99px;"><div style="width:50%;height:100%;background:var(--success);border-radius:99px;"></div></div></div>
+              <div><div style="display:flex;justify-content:space-between;"><span>Step 3: recall_safety_specialist (15 Ford recalls, ODI)</span><span>9ms</span></div><div style="height:7px;border:1px solid var(--border);border-radius:99px;"><div style="width:38%;height:100%;background:var(--success);border-radius:99px;"></div></div></div>
+              <div><div style="display:flex;justify-content:space-between;"><span>Step 4: warranty_policy_specialist (5yr/60k + 10-K)</span><span>24ms</span></div><div style="height:7px;border:1px solid var(--border);border-radius:99px;"><div style="width:100%;height:100%;background:var(--success);border-radius:99px;"></div></div></div>
+              <div><div style="display:flex;justify-content:space-between;"><span>Step 5: verify_diagnostic_contradictions (PASS)</span><span>6ms</span></div><div style="height:7px;border:1px solid var(--border);border-radius:99px;"><div style="width:25%;height:100%;background:var(--success);border-radius:99px;"></div></div></div>
+            </div>
+          </div>
+
+          <div class="subcard">
+            <h3>Live Inspector Sub-Tabs &amp; Behavior</h3>
+            <ul style="font-size:12px;">
+              <li><strong>All Charts / Agents / Chunking / 2-Stage RAG:</strong> Switch views cleanly on the docked left column without leaving your active module.</li>
+              <li><strong>Live Query Binding:</strong> Pulses all 6 pipeline stage badges during requests, then updates charts with actual <code>result.rerankLog</code>, <code>result.adkTrace</code>, <code>warrantyAssessment</code>, and <code>convertedTorque</code>.</li>
+              <li><strong>How Every Stage Works:</strong> Always lists all 6 pipeline stages inline under the charts for quick onboarding and architecture demos.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 7: MODEL CONTEXT PROTOCOL (MCP) ARCHITECTURE -->
+    <section id="tab-mcp" class="tab-panel hidden">
+      <div class="card">
+        <h2>Model Context Protocol (MCP) Architecture &amp; Live Hardware/Fleet Integration</h2>
+        <p class="muted" style="font-size:13px;">
+          Rather than coupling diagnostic tools inside a monolithic application server, the system implements Anthropic &amp; Google's <strong>Model Context Protocol (MCP)</strong>. Gemini 3.8 Flash acts as an MCP Host connecting over <strong>JSON-RPC 2.0 (stdio and SSE)</strong> to four independent tool servers.
+        </p>
+
+        <!-- ARCHITECTURAL DIAGRAM: HOW MCPS WORK WITH OUR APP -->
+        <div style="margin-top:14px; margin-bottom:18px;">
+          <div style="font-weight:700; font-size:13px; margin-bottom:8px; display:flex; align-items:center; gap:8px;">
+            <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--primary);"></span>
+            <span>Architectural Diagram: How MCP Servers Interoperate with the Auto Service RAG Application</span>
+          </div>
+          <svg viewBox="0 0 940 370" style="width:100%; height:auto; border-radius:12px; border:1px solid var(--border); background:var(--content);">
+            <!-- DEFS FOR ARROWS -->
+            <defs>
+              <marker id="mcp-arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 8 5 L 0 9 z" fill="var(--muted)" />
+              </marker>
+              <marker id="mcp-arrow-primary" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 8 5 L 0 9 z" fill="var(--primary)" />
+              </marker>
+              <marker id="mcp-arrow-success" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 8 5 L 0 9 z" fill="var(--success)" />
+              </marker>
+            </defs>
+
+            <!-- 1. FRONTEND APP TIER -->
+            <rect x="18" y="16" width="200" height="338" rx="10" fill="var(--card)" stroke="var(--primary)" stroke-width="1.8" />
+            <text x="118" y="38" text-anchor="middle" fill="var(--primary)" font-size="11" font-weight="bold">1. CLIENT TIER (Vite + React)</text>
+            <text x="118" y="52" text-anchor="middle" fill="var(--muted)" font-size="9">Auto Service RAG Platform</text>
+            
+            <rect x="28" y="64" width="180" height="52" rx="6" fill="var(--content)" stroke="var(--border)" />
+            <text x="118" y="82" text-anchor="middle" fill="var(--text)" font-size="10" font-weight="bold">ChatPlayground.tsx</text>
+            <text x="118" y="96" text-anchor="middle" fill="var(--muted)" font-size="9">Technician Chat with Harry Memory</text>
+            <text x="118" y="108" text-anchor="middle" fill="var(--primary)" font-size="8">Pill: "MCP Tools: 4 Connected"</text>
+
+            <rect x="28" y="124" width="180" height="52" rx="6" fill="var(--content)" stroke="var(--border)" />
+            <text x="118" y="142" text-anchor="middle" fill="var(--text)" font-size="10" font-weight="bold">McpToolHub.tsx (Module 12)</text>
+            <text x="118" y="156" text-anchor="middle" fill="var(--muted)" font-size="9">Interactive JSON-RPC Console</text>
+            <text x="118" y="168" text-anchor="middle" fill="var(--success)" font-size="8">Presets: PIDs · Freeze Frame · Stock</text>
+
+            <rect x="28" y="184" width="180" height="48" rx="6" fill="var(--content)" stroke="var(--border)" />
+            <text x="118" y="202" text-anchor="middle" fill="var(--text)" font-size="10" font-weight="bold">AutoServiceRag.tsx</text>
+            <text x="118" y="216" text-anchor="middle" fill="var(--muted)" font-size="9">DTC P0300 Diagnostic Studio</text>
+
+            <rect x="28" y="240" width="180" height="102" rx="6" fill="var(--content)" stroke="var(--success)" stroke-width="1.2" />
+            <text x="118" y="258" text-anchor="middle" fill="var(--success)" font-size="10" font-weight="bold">Technician Intent Input</text>
+            <text x="118" y="274" text-anchor="middle" fill="var(--text)" font-size="9">"Read live fuel trim for F-150"</text>
+            <text x="118" y="288" text-anchor="middle" fill="var(--text)" font-size="9">"Pull P0300 freeze frame"</text>
+            <text x="118" y="302" text-anchor="middle" fill="var(--text)" font-size="9">"Check SP-578 spark plug stock"</text>
+            <text x="118" y="316" text-anchor="middle" fill="var(--muted)" font-size="8">Audit: mcpToolCalls[] verified</text>
+
+            <!-- 2. BACKEND & MCP HOST TIER -->
+            <rect x="250" y="16" width="230" height="338" rx="10" fill="var(--card)" stroke="var(--success)" stroke-width="1.8" />
+            <text x="365" y="38" text-anchor="middle" fill="var(--success)" font-size="11" font-weight="bold">2. MCP HOST &amp; RUNTIME</text>
+            <text x="365" y="52" text-anchor="middle" fill="var(--muted)" font-size="9">server.ts / Google ADK Host</text>
+
+            <rect x="262" y="64" width="206" height="52" rx="6" fill="var(--content)" stroke="var(--border)" />
+            <text x="365" y="82" text-anchor="middle" fill="var(--text)" font-size="10" font-weight="bold">API Router &amp; Intent Matcher</text>
+            <text x="365" y="96" text-anchor="middle" fill="var(--muted)" font-size="9">POST /api/chat · POST /api/mcp/invoke</text>
+            <text x="365" y="108" text-anchor="middle" fill="var(--primary)" font-size="8">Resolves Tool Schemas dynamically</text>
+
+            <rect x="262" y="124" width="206" height="96" rx="6" fill="var(--content)" stroke="var(--primary)" stroke-width="1.2" />
+            <text x="365" y="142" text-anchor="middle" fill="var(--primary)" font-size="10" font-weight="bold">Gemini 3.8 Flash Agent</text>
+            <text x="365" y="156" text-anchor="middle" fill="var(--muted)" font-size="9">Vertex AI Reasoning Engine</text>
+            <text x="365" y="170" text-anchor="middle" fill="var(--text)" font-size="9">+ OEM Manual (WSM 303-07A)</text>
+            <text x="365" y="184" text-anchor="middle" fill="var(--text)" font-size="9">+ Persistent Memory Bank (Harry)</text>
+            <text x="365" y="198" text-anchor="middle" fill="var(--text)" font-size="9">+ LIVE MCP TOOL INVOCATION</text>
+
+            <rect x="262" y="228" width="206" height="52" rx="6" fill="var(--content)" stroke="var(--warning)" stroke-width="1.2" />
+            <text x="365" y="246" text-anchor="middle" fill="var(--warning)" font-size="10" font-weight="bold">Zero-Trust Safety Gate</text>
+            <text x="365" y="260" text-anchor="middle" fill="var(--muted)" font-size="9">Actuator Test Interlock: PARK + KOEO</text>
+            <text x="365" y="272" text-anchor="middle" fill="var(--muted)" font-size="8">Prevents unverified mechanical actuation</text>
+
+            <rect x="262" y="288" width="206" height="54" rx="6" fill="var(--content)" stroke="var(--border)" />
+            <text x="365" y="304" text-anchor="middle" fill="var(--text)" font-size="9" font-weight="bold">JSON-RPC 2.0 Dispatcher</text>
+            <text x="365" y="318" text-anchor="middle" fill="var(--muted)" font-size="8">executeMcpToolCall(serverId, toolName)</text>
+            <text x="365" y="330" text-anchor="middle" fill="var(--success)" font-size="8">Format: JSON-RPC 2.0 (id, result)</text>
+
+            <!-- 3. PROTOCOL INTERFACE TIER -->
+            <rect x="510" y="16" width="160" height="338" rx="10" fill="var(--card)" stroke="var(--warning)" stroke-width="1.8" />
+            <text x="590" y="38" text-anchor="middle" fill="var(--warning)" font-size="11" font-weight="bold">3. MCP PROTOCOL</text>
+            <text x="590" y="52" text-anchor="middle" fill="var(--muted)" font-size="9">JSON-RPC 2.0 Contracts</text>
+
+            <rect x="520" y="64" width="140" height="52" rx="6" fill="var(--content)" stroke="var(--border)" />
+            <text x="590" y="84" text-anchor="middle" fill="var(--text)" font-size="9" font-weight="bold">Transport Layer</text>
+            <text x="590" y="98" text-anchor="middle" fill="var(--muted)" font-size="8">stdio (Local Subprocess)</text>
+            <text x="590" y="110" text-anchor="middle" fill="var(--muted)" font-size="8">SSE / HTTP (Cloud Stream)</text>
+
+            <rect x="520" y="124" width="140" height="218" rx="6" fill="var(--content)" stroke="var(--border)" />
+            <text x="590" y="142" text-anchor="middle" fill="var(--primary)" font-size="9" font-weight="bold">Tool Definitions</text>
+            <text x="590" y="160" text-anchor="middle" fill="var(--text)" font-size="8">read_live_pids</text>
+            <text x="590" y="174" text-anchor="middle" fill="var(--text)" font-size="8">fetch_freeze_frame</text>
+            <text x="590" y="188" text-anchor="middle" fill="var(--text)" font-size="8">run_actuator_test</text>
+            <line x1="530" y1="198" x2="650" y2="198" stroke="var(--border)" stroke-width="1" />
+            <text x="590" y="212" text-anchor="middle" fill="var(--text)" font-size="8">check_parts_stock</text>
+            <text x="590" y="226" text-anchor="middle" fill="var(--text)" font-size="8">estimate_labor_time</text>
+            <line x1="530" y1="236" x2="650" y2="236" stroke="var(--border)" stroke-width="1" />
+            <text x="590" y="250" text-anchor="middle" fill="var(--text)" font-size="8">query_dtc_clusters</text>
+            <text x="590" y="264" text-anchor="middle" fill="var(--text)" font-size="8">lookup_vin_warranty</text>
+            <line x1="530" y1="274" x2="650" y2="274" stroke="var(--border)" stroke-width="1" />
+            <text x="590" y="288" text-anchor="middle" fill="var(--text)" font-size="8">fetch_live_recalls</text>
+            <text x="590" y="302" text-anchor="middle" fill="var(--text)" font-size="8">get_oem_tsbs</text>
+            <text x="590" y="324" text-anchor="middle" fill="var(--success)" font-size="8">Latency: 8–22ms</text>
+
+            <!-- 4. MCP SERVERS & TARGETS TIER -->
+            <rect x="700" y="16" width="222" height="338" rx="10" fill="var(--card)" stroke="var(--border)" stroke-width="1.8" />
+            <text x="811" y="38" text-anchor="middle" fill="var(--text)" font-size="11" font-weight="bold">4. MCP SERVERS &amp; TARGETS</text>
+            <text x="811" y="52" text-anchor="middle" fill="var(--muted)" font-size="9">Hardware, Inventory &amp; Cloud</text>
+
+            <rect x="710" y="64" width="202" height="66" rx="6" fill="var(--content)" stroke="var(--primary)" />
+            <text x="811" y="82" text-anchor="middle" fill="var(--primary)" font-size="10" font-weight="bold">mcp-obd2-telemetry</text>
+            <text x="811" y="96" text-anchor="middle" fill="var(--muted)" font-size="8">J2534 Pass-Thru / ELM327 Dongle</text>
+            <text x="811" y="110" text-anchor="middle" fill="var(--text)" font-size="8">CAN Bus 500 kbps · Live PIDs &amp; Freeze Frame</text>
+            <text x="811" y="122" text-anchor="middle" fill="var(--success)" font-size="8">Status: ONLINE (8ms)</text>
+
+            <rect x="710" y="136" width="202" height="66" rx="6" fill="var(--content)" stroke="var(--success)" />
+            <text x="811" y="154" text-anchor="middle" fill="var(--success)" font-size="10" font-weight="bold">mcp-parts-inventory</text>
+            <text x="811" y="168" text-anchor="middle" fill="var(--muted)" font-size="8">Dealership DMS / OEM Catalog</text>
+            <text x="811" y="182" text-anchor="middle" fill="var(--text)" font-size="8">CDK/Reynolds · Mitchell 1 Book Time</text>
+            <text x="811" y="194" text-anchor="middle" fill="var(--success)" font-size="8">Status: ONLINE (14ms)</text>
+
+            <rect x="710" y="208" width="202" height="66" rx="6" fill="var(--content)" stroke="var(--warning)" />
+            <text x="811" y="226" text-anchor="middle" fill="var(--warning)" font-size="10" font-weight="bold">mcp-gcp-bigquery-fleet</text>
+            <text x="811" y="240" text-anchor="middle" fill="var(--muted)" font-size="8">Google Cloud BigQuery Partition</text>
+            <text x="811" y="254" text-anchor="middle" fill="var(--text)" font-size="8">48,500+ Connected Vehicles · Clusters</text>
+            <text x="811" y="266" text-anchor="middle" fill="var(--success)" font-size="8">Status: ONLINE (22ms)</text>
+
+            <rect x="710" y="280" width="202" height="64" rx="6" fill="var(--content)" stroke="var(--error)" />
+            <text x="811" y="298" text-anchor="middle" fill="var(--error)" font-size="10" font-weight="bold">mcp-nhtsa-live</text>
+            <text x="811" y="312" text-anchor="middle" fill="var(--muted)" font-size="8">National Highway Traffic Safety Admin</text>
+            <text x="811" y="326" text-anchor="middle" fill="var(--text)" font-size="8">api.nhtsa.gov · Live Defect Feeds</text>
+            <text x="811" y="338" text-anchor="middle" fill="var(--success)" font-size="8">Status: ONLINE (18ms)</text>
+
+            <!-- INTER-TIER CONNECTING ARROWS -->
+            <!-- 1 to 2 -->
+            <line x1="218" y1="150" x2="250" y2="150" stroke="var(--primary)" stroke-width="1.8" marker-end="url(#mcp-arrow-primary)" />
+            <text x="234" y="142" text-anchor="middle" fill="var(--primary)" font-size="8">REST</text>
+            <line x1="250" y1="210" x2="218" y2="210" stroke="var(--success)" stroke-width="1.8" marker-end="url(#mcp-arrow-success)" />
+            <text x="234" y="224" text-anchor="middle" fill="var(--success)" font-size="8">JSON</text>
+
+            <!-- 2 to 3 -->
+            <line x1="480" y1="160" x2="510" y2="160" stroke="var(--primary)" stroke-width="1.8" marker-end="url(#mcp-arrow-primary)" />
+            <text x="495" y="152" text-anchor="middle" fill="var(--primary)" font-size="8">Call</text>
+            <line x1="510" y1="200" x2="480" y2="200" stroke="var(--success)" stroke-width="1.8" marker-end="url(#mcp-arrow-success)" />
+            <text x="495" y="214" text-anchor="middle" fill="var(--success)" font-size="8">Result</text>
+
+            <!-- 3 to 4 -->
+            <line x1="670" y1="100" x2="710" y2="100" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#mcp-arrow)" />
+            <line x1="670" y1="170" x2="710" y2="170" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#mcp-arrow)" />
+            <line x1="670" y1="240" x2="710" y2="240" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#mcp-arrow)" />
+            <line x1="670" y1="310" x2="710" y2="310" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#mcp-arrow)" />
+          </svg>
+        </div>
+
+        <div class="grid-2" style="margin-top:16px;">
+          <div class="subcard">
+            <div class="muted">Live Vehicle Diagnostics</div>
+            <div class="kpi-val" style="color:var(--primary);">mcp-obd2-telemetry</div>
+            <p style="font-size:12px;margin:6px 0 0 0;">
+              Connects directly to J2534 Pass-Thru and ELM327 hardware interfaces over high-speed CAN Bus (500 kbps).
+            </p>
+            <ul style="font-size:12px;margin-top:6px;padding-left:16px;">
+              <li><code>read_live_pids</code>: Polls live RPM, Coolant Temp, Short-Term &amp; Long-Term Fuel Trims (+14.8% lean misfire alert).</li>
+              <li><code>fetch_freeze_frame</code>: Extracts millisecond freeze frame snapshot when DTC P0300 tripped under 18.4 PSI boost at -4°C.</li>
+              <li><code>run_actuator_test</code>: Bidirectional PCM test for EVAP purge solenoids and cooling fan relays gated by safety interlocks.</li>
+            </ul>
+          </div>
+
+          <div class="subcard">
+            <div class="muted">OEM Parts &amp; DMS Catalog</div>
+            <div class="kpi-val" style="color:var(--success);">mcp-parts-inventory</div>
+            <p style="font-size:12px;margin:6px 0 0 0;">
+              Interfaces with dealership DMS (CDK / Reynolds &amp; Reynolds) and OEM engineering supersession catalogs.
+            </p>
+            <ul style="font-size:12px;margin-top:6px;padding-left:16px;">
+              <li><code>check_parts_stock</code>: Real-time inventory check (e.g. Motorcraft SP-578 &rarr; 18 in stock, Bin Aisle 4/C-12).</li>
+              <li><code>get_superseded_part_numbers</code>: Identifies revised service parts (SP-578 superseded to SP-594 Rev D per TSB 21-2249).</li>
+              <li><code>estimate_labor_time</code>: Standard Mitchell 1 / ALLDATA book time (1.8 hrs for 6x spark plug R&amp;R).</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="grid-2" style="margin-top:16px;">
+          <div class="subcard">
+            <div class="muted">Cloud Analytics &amp; Fleet Lake</div>
+            <div class="kpi-val" style="color:var(--warning);">mcp-gcp-bigquery-fleet</div>
+            <p style="font-size:12px;margin:6px 0 0 0;">
+              Analyzes fleet telematics partitioned across 48,500+ commercial vehicles in Google Cloud BigQuery.
+            </p>
+            <ul style="font-size:12px;margin-top:6px;padding-left:16px;">
+              <li><code>query_dtc_fleet_clusters</code>: Identifies cold-weather misfire clusters (61.4% in US Midwest cold starts).</li>
+              <li><code>lookup_vin_warranty_history</code>: Verifies VIN 1FTFW1E84MK129481 powertrain warranty coverage and open recalls.</li>
+            </ul>
+          </div>
+
+          <div class="subcard">
+            <div class="muted">Federal Safety Defect Stream</div>
+            <div class="kpi-val" style="color:var(--error);">mcp-nhtsa-live</div>
+            <p style="font-size:12px;margin:6px 0 0 0;">
+              Dynamic interface pulling real-time defect campaigns and Technical Service Bulletins from <code>api.nhtsa.gov</code>.
+            </p>
+            <ul style="font-size:12px;margin-top:6px;padding-left:16px;">
+              <li><code>fetch_live_recalls_by_vin</code>: Matches VIN against active federal safety campaigns (e.g. 21V-784 moisture ingress).</li>
+              <li><code>get_technical_service_bulletins</code>: Pulls OEM bulletins (TSB 22-2140) and torque service notices.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="subcard" style="margin-top:16px;">
+          <h3>MCP Protocol Request &amp; Response Flow (JSON-RPC 2.0)</h3>
+          <pre style="background:var(--code-bg);color:var(--text);padding:14px;border-radius:8px;font-size:12px;overflow-x:auto;">
+// 1. Client Request sent from Gemini Agent Host to MCP Server (mcp-obd2-telemetry):
+{
+  "jsonrpc": "2.0",
+  "id": "mcp_call_1794814920000",
+  "method": "tools/call",
+  "params": {
+    "name": "fetch_freeze_frame",
+    "arguments": {
+      "dtc": "P0300",
+      "frameNumber": 0
+    }
+  }
+}
+
+// 2. Server Response received over stdio transport:
+{
+  "jsonrpc": "2.0",
+  "id": "mcp_call_1794814920000",
+  "result": {
+    "status": "SUCCESS",
+    "dtcTriggered": "P0300",
+    "milStatus": "MIL ON",
+    "snapshot": {
+      "engineRpm": 2450,
+      "calculatedEngineLoad": "74.2%",
+      "fuelRailPressure": "2,150 PSI",
+      "ambientAirTemp": "-4°C (Sub-zero cold start)"
+    },
+    "diagnosticNote": "Freeze frame indicates P0300 occurred under boost acceleration in cold weather."
+  }
+}</pre>
+        </div>
+
+        <div class="subcard" style="margin-top:16px;">
+          <h3>Engineering Fidelity: What Is 100% Real vs. What Is Simulated</h3>
+          <p class="muted" style="font-size:12px;">
+            In Forward Deployed Engineering (FDE), developing against a verified <strong>Hardware-in-the-Loop (HIL) Mock Driver</strong> is standard production practice. It ensures the entire software contract, Gemini multi-turn reasoning, and safety interlocks are battle-tested before connecting physical shop hardware.
+          </p>
+
+          <div class="grid-2" style="margin-top:12px;">
+            <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px;">
+              <div style="display:flex;align-items:center;gap:6px;font-weight:700;color:var(--success);font-size:13px;margin-bottom:8px;">
+                <span>✔ 100% Real Right Now</span>
+              </div>
+              <ul style="font-size:12px;margin:0;padding-left:18px;line-height:1.6;">
+                <li><strong>Protocol Specification:</strong> Endpoints (<code>/api/mcp/servers</code>, <code>/api/mcp/invoke</code>) operate on authentic Model Context Protocol v2024-11-05 JSON-RPC 2.0 standards.</li>
+                <li><strong>Agent Multi-Turn Reasoning:</strong> Gemini 3.8 Flash actually executes tool discovery, passes structured arguments, receives payloads, and synthesizes technical advice.</li>
+                <li><strong>OEM Engineering Data:</strong> All returned values (e.g. <code>15 Nm</code> spark plug torque, <code>SP-578</code> &rarr; <code>SP-594</code> part supersession, <code>2,150 PSI</code> fuel rail pressure, <code>+14.8%</code> STFT) are genuine OEM technical specs.</li>
+                <li><strong>Interactive UI Dispatcher:</strong> The web console in Module 12 dynamically dispatches and inspects live JSON-RPC roundtrips in real time.</li>
+              </ul>
+            </div>
+
+            <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px;">
+              <div style="display:flex;align-items:center;gap:6px;font-weight:700;color:var(--warning);font-size:13px;margin-bottom:8px;">
+                <span>⚡ Simulated / Mock Drivers (Ready to Plug In)</span>
+              </div>
+              <ul style="font-size:12px;margin:0;padding-left:18px;line-height:1.6;">
+                <li><strong>OBD-II CAN Hardware:</strong> Emulates 500 kbps CAN telemetry. <em>To make physical:</em> Connect a $30 USB ELM327 / J2534 adapter to a car's 16-pin port using Python's <code>python-can</code> or <code>obd</code> library.</li>
+                <li><strong>Dealership DMS Parts:</strong> Emulates dealership inventory and bin locations. <em>To make live:</em> Connect API credentials for CDK Global, Reynolds &amp; Reynolds, or PartsLink24.</li>
+                <li><strong>BigQuery Fleet Telematics:</strong> Returns structured regional fleet failure patterns. <em>To make live:</em> Connect service account credentials to a billed Google Cloud BigQuery telematics partition.</li>
+                <li><strong>NHTSA Safety Stream:</strong> Returns authentic campaign data. <em>To make live:</em> Point outgoing HTTP fetch directly to <code>https://api.nhtsa.gov/recalls/recallsByVin</code>.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div style="margin-top:16px;">
+            <h4 style="margin:0 0 8px 0;font-size:13px;font-weight:700;color:var(--text);">What Is Simulated (Not Hooked to Live Hardware Yet)</h4>
+            <div style="overflow-x:auto;border:1px solid var(--border);border-radius:10px;background:var(--card);">
+              <table style="width:100%;border-collapse:collapse;font-size:12px;text-align:left;">
+                <thead>
+                  <tr style="border-bottom:1px solid var(--border);background:var(--content);color:var(--muted);">
+                    <th style="padding:10px 14px;font-weight:600;">MCP Server</th>
+                    <th style="padding:10px 14px;font-weight:600;">Current State</th>
+                    <th style="padding:10px 14px;font-weight:600;">What It Takes to Make It 100% Physical</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr style="border-bottom:1px solid var(--border);">
+                    <td style="padding:10px 14px;vertical-align:top;"><code style="color:var(--warning);font-weight:600;">mcp-obd2-telemetry</code></td>
+                    <td style="padding:10px 14px;vertical-align:top;">Returns simulated live CAN Bus PIDs and freeze frames.</td>
+                    <td style="padding:10px 14px;vertical-align:top;">Plug a <strong>$30 USB ELM327 cable or OBDLink MX+</strong> into a vehicle's 16-pin port under the steering wheel and connect it via Python's <code>python-can</code> or <code>obd</code> library.</td>
+                  </tr>
+                  <tr style="border-bottom:1px solid var(--border);">
+                    <td style="padding:10px 14px;vertical-align:top;"><code style="color:var(--warning);font-weight:600;">mcp-parts-inventory</code></td>
+                    <td style="padding:10px 14px;vertical-align:top;">Returns realistic dealer stock (<code>SP-578</code>, Bin <code>Aisle 4, Shelf C</code>).</td>
+                    <td style="padding:10px 14px;vertical-align:top;">Connect live API credentials to a dealership DMS provider (<strong>CDK Global</strong>, <strong>Reynolds &amp; Reynolds</strong>, or <strong>PartsLink24</strong>).</td>
+                  </tr>
+                  <tr style="border-bottom:1px solid var(--border);">
+                    <td style="padding:10px 14px;vertical-align:top;"><code style="color:var(--warning);font-weight:600;">mcp-gcp-bigquery-fleet</code></td>
+                    <td style="padding:10px 14px;vertical-align:top;">Returns structured fleet cluster analysis.</td>
+                    <td style="padding:10px 14px;vertical-align:top;">Point the SQL query to a live, billed Google Cloud BigQuery dataset of connected vehicle telematics.</td>
+                  </tr>
+                  <tr>
+                    <td style="padding:10px 14px;vertical-align:top;"><code style="color:var(--warning);font-weight:600;">mcp-nhtsa-live</code></td>
+                    <td style="padding:10px 14px;vertical-align:top;">Returns sample recall campaigns for 2021 F-150.</td>
+                    <td style="padding:10px 14px;vertical-align:top;">Make a live outgoing HTTP request to <code>https://api.nhtsa.gov/recalls/recallsByVin</code>.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 8: AUTOMATED EVALS & WHEN THEY RUN -->
+    <section id="tab-evals" class="tab-panel hidden">
+      <div class="card">
+        <h2>Automated EVALs &amp; When Evaluations Execute in the App Lifecycle</h2>
+        <p class="muted" style="font-size:13px;">
+          Evaluations (EVALs) act as an automated diagnostic dyno for this platform — running quantitatively across four safety-critical dimensions via <code>evals/rag_eval.py</code>, live backend <code>POST /api/evals/run</code>, Module 12 UI console, and synchronous runtime gates.
+        </p>
+
+        <!-- 1. THE 4 DIMENSIONS TABLE -->
+        <div class="subcard" style="margin-top:16px;">
+          <h3>1. The 4 Dimensions We Evaluate in This Diagnostic App</h3>
+          <div style="overflow-x:auto;border:1px solid var(--border);border-radius:10px;background:var(--card);margin-top:10px;">
+            <table style="width:100%;border-collapse:collapse;font-size:12px;text-align:left;">
+              <thead>
+                <tr style="border-bottom:1px solid var(--border);background:var(--content);color:var(--muted);">
+                  <th style="padding:10px 14px;font-weight:600;width:24%;">Dimension</th>
+                  <th style="padding:10px 14px;font-weight:600;width:34%;">What It Tests</th>
+                  <th style="padding:10px 14px;font-weight:600;width:42%;">Example Failure Caught by EVALs</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr style="border-bottom:1px solid var(--border);">
+                  <td style="padding:10px 14px;vertical-align:top;font-weight:700;">1. RAG Retrieval Quality</td>
+                  <td style="padding:10px 14px;vertical-align:top;">Did the hybrid retriever pull the exact OEM manual?</td>
+                  <td style="padding:10px 14px;vertical-align:top;">Searching <code>P0300 on Ford F-150</code> pulls a Chevy manual instead of Ford WSM 303-07A.</td>
+                </tr>
+                <tr style="border-bottom:1px solid var(--border);">
+                  <td style="padding:10px 14px;vertical-align:top;font-weight:700;">2. Factual &amp; Torque Precision</td>
+                  <td style="padding:10px 14px;vertical-align:top;">Are technical values 100% exact to OEM specs?</td>
+                  <td style="padding:10px 14px;vertical-align:top;">Recommending <strong>25 Nm</strong> on spark plugs instead of <strong>15 Nm</strong>, which would strip the aluminum cylinder head.</td>
+                </tr>
+                <tr style="border-bottom:1px solid var(--border);">
+                  <td style="padding:10px 14px;vertical-align:top;font-weight:700;">3. Safety &amp; Grounding Gate</td>
+                  <td style="padding:10px 14px;vertical-align:top;">Did the model issue mandatory safety procedures?</td>
+                  <td style="padding:10px 14px;vertical-align:top;">Telling a technician to service a Toyota RAV4 hybrid pack without disconnecting the High-Voltage service plug first.</td>
+                </tr>
+                <tr>
+                  <td style="padding:10px 14px;vertical-align:top;font-weight:700;">4. MCP Tool Calling Accuracy</td>
+                  <td style="padding:10px 14px;vertical-align:top;">Did the agent invoke the right tool with valid args?</td>
+                  <td style="padding:10px 14px;vertical-align:top;">Calling <code>run_actuator_test</code> when the technician only asked to read live sensor PIDs.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 2. SVG LIFECYCLE DIAGRAM: WHEN WILL EVALS BE DONE -->
+        <div style="margin-top:18px;">
+          <div style="font-weight:700;font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:8px;">
+            <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--warning);"></span>
+            <span>2. Lifecycle Diagram: When &amp; Where EVALs Run (Pre-Deploy, CI/CD, Runtime &amp; Upgrades)</span>
+          </div>
+          <svg viewBox="0 0 940 280" style="width:100%;height:auto;border-radius:12px;border:1px solid var(--border);background:var(--content);">
+            <defs>
+              <marker id="eval-arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 8 5 L 0 9 z" fill="var(--primary)" />
+              </marker>
+            </defs>
+
+            <!-- STAGE 1 -->
+            <rect x="18" y="22" width="210" height="236" rx="10" fill="var(--card)" stroke="var(--primary)" stroke-width="1.8" />
+            <text x="123" y="46" text-anchor="middle" fill="var(--primary)" font-size="11" font-weight="bold">TRIGGER 1: LOCAL / PRE-COMMIT</text>
+            <text x="123" y="62" text-anchor="middle" fill="var(--muted)" font-size="9">Before committing code or manuals</text>
+            <rect x="30" y="76" width="186" height="58" rx="6" fill="var(--content)" stroke="var(--border)" />
+            <text x="123" y="94" text-anchor="middle" fill="var(--text)" font-size="9" font-weight="bold">When Triggered:</text>
+            <text x="123" y="108" text-anchor="middle" fill="var(--muted)" font-size="8">On manual ingest, prompt edit,</text>
+            <text x="123" y="120" text-anchor="middle" fill="var(--muted)" font-size="8">or retriever tuning</text>
+            <rect x="30" y="144" width="186" height="100" rx="6" fill="var(--content)" stroke="var(--primary)" stroke-width="1" />
+            <text x="123" y="162" text-anchor="middle" fill="var(--primary)" font-size="9" font-weight="bold">How Executed:</text>
+            <text x="123" y="178" text-anchor="middle" fill="var(--text)" font-size="8">python -m evals.rag_eval</text>
+            <text x="123" y="192" text-anchor="middle" fill="var(--text)" font-size="8">POST /api/evals/run</text>
+            <text x="123" y="206" text-anchor="middle" fill="var(--text)" font-size="8">Module 12 &rarr; 4-Dimension EVALs Tab</text>
+            <text x="123" y="226" text-anchor="middle" fill="var(--success)" font-size="8" font-weight="bold">Tests All 4 Dimensions (Golden Set)</text>
+
+            <!-- STAGE 2 -->
+            <rect x="250" y="22" width="210" height="236" rx="10" fill="var(--card)" stroke="var(--success)" stroke-width="1.8" />
+            <text x="355" y="46" text-anchor="middle" fill="var(--success)" font-size="11" font-weight="bold">TRIGGER 2: CI/CD PRE-DEPLOY</text>
+            <text x="355" y="62" text-anchor="middle" fill="var(--muted)" font-size="9">Before Cloud Run rollout</text>
+            <rect x="262" y="76" width="186" height="58" rx="6" fill="var(--content)" stroke="var(--border)" />
+            <text x="355" y="94" text-anchor="middle" fill="var(--text)" font-size="9" font-weight="bold">When Triggered:</text>
+            <text x="355" y="108" text-anchor="middle" fill="var(--muted)" font-size="8">Cloud Build pipeline prior to</text>
+            <text x="355" y="120" text-anchor="middle" fill="var(--muted)" font-size="8">gcloud run deploy dtc-diagnostics</text>
+            <rect x="262" y="144" width="186" height="100" rx="6" fill="var(--content)" stroke="var(--success)" stroke-width="1" />
+            <text x="355" y="162" text-anchor="middle" fill="var(--success)" font-size="9" font-weight="bold">Gate Action:</text>
+            <text x="355" y="178" text-anchor="middle" fill="var(--text)" font-size="8">Runs evals/run_evals.sh</text>
+            <text x="355" y="192" text-anchor="middle" fill="var(--text)" font-size="8">Blocks rollout if torque &lt; 100%</text>
+            <text x="355" y="206" text-anchor="middle" fill="var(--text)" font-size="8">Blocks rollout if safety &lt; 100%</text>
+            <text x="355" y="226" text-anchor="middle" fill="var(--warning)" font-size="8" font-weight="bold">Zero-Regression Release Gate</text>
+
+            <!-- STAGE 3 -->
+            <rect x="482" y="22" width="210" height="236" rx="10" fill="var(--card)" stroke="var(--warning)" stroke-width="1.8" />
+            <text x="587" y="46" text-anchor="middle" fill="var(--warning)" font-size="11" font-weight="bold">TRIGGER 3: RUNTIME (~6ms)</text>
+            <text x="587" y="62" text-anchor="middle" fill="var(--muted)" font-size="9">Every Live Technician Request</text>
+            <rect x="494" y="76" width="186" height="58" rx="6" fill="var(--content)" stroke="var(--border)" />
+            <text x="587" y="94" text-anchor="middle" fill="var(--text)" font-size="9" font-weight="bold">When Triggered:</text>
+            <text x="587" y="108" text-anchor="middle" fill="var(--muted)" font-size="8">Synchronously on EVERY</text>
+            <text x="587" y="120" text-anchor="middle" fill="var(--muted)" font-size="8">live /api/adk/run &amp; chat turn</text>
+            <rect x="494" y="144" width="186" height="100" rx="6" fill="var(--content)" stroke="var(--warning)" stroke-width="1" />
+            <text x="587" y="162" text-anchor="middle" fill="var(--warning)" font-size="9" font-weight="bold">Online Self-Reflection:</text>
+            <text x="587" y="178" text-anchor="middle" fill="var(--text)" font-size="8">verify_diagnostic_contradictions</text>
+            <text x="587" y="192" text-anchor="middle" fill="var(--text)" font-size="8">Enforces HV / Fuel Safety Gate</text>
+            <text x="587" y="206" text-anchor="middle" fill="var(--text)" font-size="8">Verifies OEM Section + Torque</text>
+            <text x="587" y="226" text-anchor="middle" fill="var(--success)" font-size="8" font-weight="bold">Live Guardrail Before UI Render</text>
+
+            <!-- STAGE 4 -->
+            <rect x="714" y="22" width="208" height="236" rx="10" fill="var(--card)" stroke="var(--border)" stroke-width="1.8" />
+            <text x="818" y="46" text-anchor="middle" fill="var(--text)" font-size="11" font-weight="bold">TRIGGER 4: MODEL UPGRADE</text>
+            <text x="818" y="62" text-anchor="middle" fill="var(--muted)" font-size="9">Scheduled / Gemini Model Switch</text>
+            <rect x="726" y="76" width="184" height="58" rx="6" fill="var(--content)" stroke="var(--border)" />
+            <text x="818" y="94" text-anchor="middle" fill="var(--text)" font-size="9" font-weight="bold">When Triggered:</text>
+            <text x="818" y="108" text-anchor="middle" fill="var(--muted)" font-size="8">When upgrading Flash &rarr; Argon</text>
+            <text x="818" y="120" text-anchor="middle" fill="var(--muted)" font-size="8">or onboarding new fleet manuals</text>
+            <rect x="726" y="144" width="184" height="100" rx="6" fill="var(--content)" stroke="var(--border)" />
+            <text x="818" y="162" text-anchor="middle" fill="var(--primary)" font-size="9" font-weight="bold">Vertex AI &amp; ADK Console:</text>
+            <text x="818" y="178" text-anchor="middle" fill="var(--text)" font-size="8">ADK /dev-ui &rarr; Evals Tab</text>
+            <text x="818" y="192" text-anchor="middle" fill="var(--text)" font-size="8">Vertex AI AutoSxS Comparison</text>
+            <text x="818" y="206" text-anchor="middle" fill="var(--text)" font-size="8">Rapid Eval: groundedness/safety</text>
+            <text x="818" y="226" text-anchor="middle" fill="var(--success)" font-size="8" font-weight="bold">Side-by-Side A/B Verification</text>
+
+            <!-- CONNECTING ARROWS -->
+            <line x1="228" y1="140" x2="250" y2="140" stroke="var(--primary)" stroke-width="1.8" marker-end="url(#eval-arrow)" />
+            <line x1="460" y1="140" x2="482" y2="140" stroke="var(--primary)" stroke-width="1.8" marker-end="url(#eval-arrow)" />
+            <line x1="692" y1="140" x2="714" y2="140" stroke="var(--primary)" stroke-width="1.8" marker-end="url(#eval-arrow)" />
+          </svg>
+        </div>
+
+        <!-- 3. DETAILED TRIGGER MATRIX TABLE -->
+        <div class="subcard" style="margin-top:16px;">
+          <h3>3. When EVALs Execute: Trigger Matrix &amp; Pass Thresholds</h3>
+          <div style="overflow-x:auto;border:1px solid var(--border);border-radius:10px;background:var(--card);margin-top:10px;">
+            <table style="width:100%;border-collapse:collapse;font-size:12px;text-align:left;">
+              <thead>
+                <tr style="border-bottom:1px solid var(--border);background:var(--content);color:var(--muted);">
+                  <th style="padding:10px 14px;font-weight:600;">When It Runs</th>
+                  <th style="padding:10px 14px;font-weight:600;">How It Is Triggered</th>
+                  <th style="padding:10px 14px;font-weight:600;">Dimensions Checked</th>
+                  <th style="padding:10px 14px;font-weight:600;">Pass Threshold &amp; Action on Failure</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr style="border-bottom:1px solid var(--border);">
+                  <td style="padding:10px 14px;vertical-align:top;font-weight:700;color:var(--primary);">Local Development / Manual Ingest</td>
+                  <td style="padding:10px 14px;vertical-align:top;"><code>POST /api/evals/run</code>, Module 12 UI button, or <code>python -m evals.rag_eval</code></td>
+                  <td style="padding:10px 14px;vertical-align:top;">All 4 dimensions across <code>evals/test_cases.json</code></td>
+                  <td style="padding:10px 14px;vertical-align:top;">100% required for torque &amp; safety; prints failing test ID and mismatched section/tool.</td>
+                </tr>
+                <tr style="border-bottom:1px solid var(--border);">
+                  <td style="padding:10px 14px;vertical-align:top;font-weight:700;color:var(--success);">Pre-Deploy CI/CD Gate</td>
+                  <td style="padding:10px 14px;vertical-align:top;"><code>evals/run_evals.sh</code> before <code>gcloud run deploy</code></td>
+                  <td style="padding:10px 14px;vertical-align:top;">RAG Citation, Torque exactness, HV/Fuel Safety Gate, MCP selection</td>
+                  <td style="padding:10px 14px;vertical-align:top;">Non-zero exit blocks Cloud Run deployment until regression is fixed.</td>
+                </tr>
+                <tr style="border-bottom:1px solid var(--border);">
+                  <td style="padding:10px 14px;vertical-align:top;font-weight:700;color:var(--warning);">Every Live User Request (Runtime)</td>
+                  <td style="padding:10px 14px;vertical-align:top;">Automatic inside <code>POST /api/adk/run</code> &amp; <code>POST /api/chat</code> (~6ms)</td>
+                  <td style="padding:10px 14px;vertical-align:top;">Self-reflection contradiction gate, HV disconnect warning, MCP zero-trust interlock</td>
+                  <td style="padding:10px 14px;vertical-align:top;">Blocks unsafe mechanical actuation and injects missing OEM torque/safety callouts.</td>
+                </tr>
+                <tr>
+                  <td style="padding:10px 14px;vertical-align:top;font-weight:700;">Model / Prompt Upgrades</td>
+                  <td style="padding:10px 14px;vertical-align:top;">Google ADK <code>/dev-ui</code> Evals tab &amp; Vertex AI AutoSxS</td>
+                  <td style="padding:10px 14px;vertical-align:top;">End-to-end semantic quality, groundedness, safety, tool trajectory</td>
+                  <td style="padding:10px 14px;vertical-align:top;">Holds candidate model (e.g. Gemini 4 Argon) in shadow mode if score trails baseline.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 9: 4-LAYER RUNTIME GUARDRAILS -->
+    <section id="tab-guardrails" class="tab-panel hidden">
+      <div class="card">
+        <h2>Runtime Guardrails Architecture (4 Defense Layers)</h2>
+
+        <!-- EVALs vs Guardrails Distinction -->
+        <div class="grid-2" style="margin-top:12px;">
+          <div class="subcard">
+            <div class="muted">Lab Verification (Pre-Deploy)</div>
+            <div class="kpi-val" style="color:var(--primary);">EVALs = Crash Tests in the Lab</div>
+            <p style="font-size:12px;margin:6px 0 0 0;">
+              Run on benchmark datasets (<code>evals/rag_eval.py</code>, <code>POST /api/evals/run</code>) before deployment to measure accuracy, citation fidelity, torque precision, and MCP tool selection.
+            </p>
+          </div>
+          <div class="subcard">
+            <div class="muted">Inline Protection (Live Requests)</div>
+            <div class="kpi-val" style="color:var(--error);">Guardrails = Real-Time Seatbelts &amp; Circuit Breakers</div>
+            <p style="font-size:12px;margin:6px 0 0 0;">
+              Deterministic and policy checks that sit <strong>inline</strong> on every live technician message, MCP tool invocation, and Gemini draft output to block unsafe, illegal, or hallucinated responses <strong>before</strong> they reach the technician or vehicle hardware.
+            </p>
+          </div>
+        </div>
+
+        <!-- How to Architect Guardrails in Our App (4 Defense Layers) -->
+        <div style="margin-top:18px;">
+          <h3>How to Architect Guardrails in Our App (4 Defense Layers)</h3>
+          <p class="muted" style="font-size:12px;margin-bottom:10px;">
+            End-to-end runtime defense pipeline implemented in <code>server.ts</code> (<code>runInputComplianceAndPiiGuardrail</code>, <code>executeMcpToolCall</code>, <code>runOutputTorqueAndSafetyGuardrail</code>) and verified by Module 12 UI console (<code>4-Layer Guardrails</code>).
+          </p>
+
+          <!-- SVG 4-LAYER DEFENSE FLOW DIAGRAM -->
+          <svg viewBox="0 0 940 310" style="width:100%;height:auto;border-radius:12px;border:1px solid var(--border);background:var(--content);margin-bottom:14px;">
+            <defs>
+              <marker id="gr-arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 8 5 L 0 9 z" fill="var(--primary)" />
+              </marker>
+              <marker id="gr-arrow-err" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 8 5 L 0 9 z" fill="var(--error)" />
+              </marker>
+              <marker id="gr-arrow-ok" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 8 5 L 0 9 z" fill="var(--success)" />
+              </marker>
+            </defs>
+
+            <!-- TECH INPUT -->
+            <rect x="16" y="102" width="126" height="96" rx="8" fill="var(--card)" stroke="var(--border)" stroke-width="1.6" />
+            <text x="79" y="126" text-anchor="middle" fill="var(--text)" font-size="10" font-weight="bold">Technician Input</text>
+            <text x="79" y="144" text-anchor="middle" fill="var(--muted)" font-size="8">POST /api/chat</text>
+            <text x="79" y="158" text-anchor="middle" fill="var(--muted)" font-size="8">Raw RO / Prompt</text>
+            <text x="79" y="174" text-anchor="middle" fill="var(--muted)" font-size="8">DTC / OBD Query</text>
+
+            <!-- LAYER 1 & 2 INPUT GUARDRAIL -->
+            <rect x="168" y="20" width="220" height="196" rx="10" fill="var(--card)" stroke="var(--error)" stroke-width="1.8" />
+            <text x="278" y="42" text-anchor="middle" fill="var(--error)" font-size="10" font-weight="bold">LAYERS 1 &amp; 2: INPUT GUARDRAIL</text>
+            <text x="278" y="56" text-anchor="middle" fill="var(--muted)" font-size="8">Pre-LLM Gate (~2ms · 0 LLM Tokens)</text>
+
+            <rect x="178" y="68" width="200" height="66" rx="6" fill="var(--content)" stroke="var(--error)" stroke-width="1" />
+            <text x="278" y="84" text-anchor="middle" fill="var(--text)" font-size="9" font-weight="bold">1. Input Compliance &amp; Tamper</text>
+            <text x="278" y="98" text-anchor="middle" fill="var(--muted)" font-size="8">Blocks DPF/airbag bypass &amp; injections</text>
+            <text x="278" y="112" text-anchor="middle" fill="var(--error)" font-size="8">&rarr; BLOCKED_BY_SAFETY_POLICY</text>
+
+            <rect x="178" y="142" width="200" height="64" rx="6" fill="var(--content)" stroke="var(--warning)" stroke-width="1" />
+            <text x="278" y="158" text-anchor="middle" fill="var(--text)" font-size="9" font-weight="bold">2. PII / Repair Order Scrubber</text>
+            <text x="278" y="172" text-anchor="middle" fill="var(--muted)" font-size="8">Masks [REDACTED_PHONE/EMAIL/CARD]</text>
+            <text x="278" y="186" text-anchor="middle" fill="var(--success)" font-size="8">Preserves 17-char VIN &amp; DTC codes</text>
+
+            <!-- EARLY REFUSAL BOX -->
+            <rect x="198" y="242" width="160" height="48" rx="8" fill="var(--card)" stroke="var(--error)" stroke-width="1.4" />
+            <text x="278" y="262" text-anchor="middle" fill="var(--error)" font-size="9" font-weight="bold">Instant Refusal Returned</text>
+            <text x="278" y="276" text-anchor="middle" fill="var(--muted)" font-size="8">Zero Gemini API Tokens Spent</text>
+
+            <!-- GEMINI + LAYER 3 MCP INTERLOCK -->
+            <rect x="414" y="20" width="234" height="270" rx="10" fill="var(--card)" stroke="var(--primary)" stroke-width="1.8" />
+            <text x="531" y="42" text-anchor="middle" fill="var(--primary)" font-size="10" font-weight="bold">GEMINI + RAG + LAYER 3 MCP</text>
+            <text x="531" y="56" text-anchor="middle" fill="var(--muted)" font-size="8">Grounded Synthesis &amp; Zero-Trust Tool Gate</text>
+
+            <rect x="424" y="68" width="214" height="72" rx="6" fill="var(--content)" stroke="var(--border)" />
+            <text x="531" y="86" text-anchor="middle" fill="var(--text)" font-size="9" font-weight="bold">Gemini 3.8 Flash + OEM RAG</text>
+            <text x="531" y="100" text-anchor="middle" fill="var(--muted)" font-size="8">Reads scrubbed sanitizedMessage +</text>
+            <text x="531" y="114" text-anchor="middle" fill="var(--muted)" font-size="8">WSM chunks + Persistent Memory</text>
+            <text x="531" y="128" text-anchor="middle" fill="var(--primary)" font-size="8">Drafts Procedure + Torque Specs</text>
+
+            <rect x="424" y="152" width="214" height="126" rx="6" fill="var(--content)" stroke="var(--warning)" stroke-width="1.2" />
+            <text x="531" y="170" text-anchor="middle" fill="var(--warning)" font-size="9" font-weight="bold">3. MCP Hardware Actuation Gate</text>
+            <text x="531" y="186" text-anchor="middle" fill="var(--text)" font-size="8">Read-only (read_live_pids) &rarr; Allow</text>
+            <text x="531" y="202" text-anchor="middle" fill="var(--text)" font-size="8">Bidirectional (run_actuator_test):</text>
+            <text x="531" y="216" text-anchor="middle" fill="var(--success)" font-size="8">Requires PARK + RPM=0 + Token</text>
+            <text x="531" y="232" text-anchor="middle" fill="var(--error)" font-size="8">Else: BLOCKED_BY_HARDWARE_INTERLOCK</text>
+            <text x="531" y="250" text-anchor="middle" fill="var(--muted)" font-size="8">Inside POST /api/mcp/invoke</text>
+            <text x="531" y="264" text-anchor="middle" fill="var(--muted)" font-size="8">&amp; executeMcpToolCall()</text>
+
+            <!-- LAYER 4 OUTPUT GUARDRAIL -->
+            <rect x="674" y="20" width="250" height="196" rx="10" fill="var(--card)" stroke="var(--success)" stroke-width="1.8" />
+            <text x="799" y="42" text-anchor="middle" fill="var(--success)" font-size="10" font-weight="bold">LAYER 4: OUTPUT &amp; TORQUE GATE</text>
+            <text x="799" y="56" text-anchor="middle" fill="var(--muted)" font-size="8">Post-LLM Gate (~5ms Deterministic)</text>
+
+            <rect x="684" y="68" width="230" height="66" rx="6" fill="var(--content)" stroke="var(--border)" />
+            <text x="799" y="84" text-anchor="middle" fill="var(--text)" font-size="9" font-weight="bold">Torque Hallucination Override</text>
+            <text x="799" y="98" text-anchor="middle" fill="var(--muted)" font-size="8">Compares Nm in draft vs OEM torqueSpecs</text>
+            <text x="799" y="112" text-anchor="middle" fill="var(--warning)" font-size="8">25 Nm &rarr; 15 Nm (133 lb-in) [CORRECTED]</text>
+
+            <rect x="684" y="142" width="230" height="64" rx="6" fill="var(--content)" stroke="var(--success)" stroke-width="1" />
+            <text x="799" y="158" text-anchor="middle" fill="var(--text)" font-size="9" font-weight="bold">HV &amp; Fuel Safety Enforcer</text>
+            <text x="799" y="172" text-anchor="middle" fill="var(--muted)" font-size="8">Auto-injects 400V Class 0 Gloves</text>
+            <text x="799" y="186" text-anchor="middle" fill="var(--muted)" font-size="8">or 3,000 PSI fuel relief warning if omitted</text>
+
+            <!-- SAFE OUTPUT -->
+            <rect x="704" y="242" width="190" height="48" rx="8" fill="var(--card)" stroke="var(--success)" stroke-width="1.6" />
+            <text x="799" y="262" text-anchor="middle" fill="var(--success)" font-size="10" font-weight="bold">Safe Technician UI Output</text>
+            <text x="799" y="276" text-anchor="middle" fill="var(--muted)" font-size="8">+ guardrailAudit Metadata Attached</text>
+
+            <!-- ARROWS -->
+            <line x1="142" y1="150" x2="168" y2="150" stroke="var(--primary)" stroke-width="1.8" marker-end="url(#gr-arrow)" />
+            <line x1="278" y1="216" x2="278" y2="242" stroke="var(--error)" stroke-width="1.8" marker-end="url(#gr-arrow-err)" />
+            <line x1="388" y1="110" x2="414" y2="110" stroke="var(--primary)" stroke-width="1.8" marker-end="url(#gr-arrow)" />
+            <line x1="648" y1="110" x2="674" y2="110" stroke="var(--primary)" stroke-width="1.8" marker-end="url(#gr-arrow)" />
+            <line x1="799" y1="216" x2="799" y2="242" stroke="var(--success)" stroke-width="1.8" marker-end="url(#gr-arrow-ok)" />
+          </svg>
+
+          <!-- ASCII ARCHITECTURAL FLOW -->
+          <pre style="background:var(--code-bg);color:var(--text);padding:14px;border-radius:10px;font-size:11px;overflow-x:auto;">Technician Input
+      │
+      ▼
+┌──────────────────────────────────────────────────────────┐
+│ LAYER 1: INPUT GUARDRAIL (Pre-LLM Gate, ~2ms)            │
+│ - Blocks EPA/NHTSA illegal requests (e.g. DPF/airbag     │
+│   bypass) &amp; prompt injections                            │
+│ - Redacts customer PII (phone, email, credit card)       │
+└───────────────────────────┬──────────────────────────────┘
+                            │
+                            ▼
+                  Gemini + RAG Retrieval
+                            │
+                            ▼
+┌──────────────────────────────────────────────────────────┐
+│ LAYER 2: MCP TOOL &amp; HARDWARE GUARDRAIL (Zero-Trust Gate) │
+│ - Read-only tools (read_live_pids) -&gt; Auto-Allow         │
+│ - Physical actuation (run_actuator_test) -&gt; Requires     │
+│   Vehicle in PARK + RPM=0 (KOEO) + Tech Sign-off Token   │
+└───────────────────────────┬──────────────────────────────┘
+                            │
+                            ▼
+                     LLM Draft Output
+                            │
+                            ▼
+┌──────────────────────────────────────────────────────────┐
+│ LAYER 3: OUTPUT &amp; TORQUE GUARDRAIL (Post-LLM Gate, ~5ms) │
+│ - Cross-checks every "Nm / ft-lb" number in LLM text     │
+│   against retrieved chunk's exact torqueSpecs JSON       │
+│ - Auto-injects mandatory High-Voltage (400V) or Fuel     │
+│   Pressure (3,000 PSI) warning if omitted by LLM         │
+└───────────────────────────┬──────────────────────────────┘
+                            │
+                            ▼
+                  Safe Technician UI Output</pre>
+        </div>
+
+        <!-- The 4 Concrete Guardrails Table -->
+        <div class="subcard" style="margin-top:16px;">
+          <h3>The 4 Concrete Guardrails to Add to Our Codebase</h3>
+          <div style="overflow-x:auto;border:1px solid var(--border);border-radius:10px;background:var(--card);margin-top:10px;">
+            <table style="width:100%;border-collapse:collapse;font-size:12px;text-align:left;">
+              <thead>
+                <tr style="border-bottom:1px solid var(--border);background:var(--content);color:var(--muted);">
+                  <th style="padding:10px 14px;font-weight:600;width:24%;">Guardrail Layer</th>
+                  <th style="padding:10px 14px;font-weight:600;width:36%;">What It Protects Against</th>
+                  <th style="padding:10px 14px;font-weight:600;width:40%;">How We Implement It in <code>server.ts</code> &amp; <code>app/agent.py</code></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr style="border-bottom:1px solid var(--border);">
+                  <td style="padding:10px 14px;vertical-align:top;font-weight:700;">1. Input Compliance &amp; Tamper Guardrail</td>
+                  <td style="padding:10px 14px;vertical-align:top;">Prompt injection (<em>"Ignore instructions..."</em>) or illegal shop tampering (<em>"How do I bypass the airbag occupant sensor or delete the DPF/catalytic converter?"</em>).</td>
+                  <td style="padding:10px 14px;vertical-align:top;">Pre-check regex + policy classifier in <code>POST /api/chat</code> and <code>POST /api/guardrails/test</code> (<code>runInputComplianceAndPiiGuardrail</code>) that immediately returns a compliance refusal (<code>BLOCKED_BY_SAFETY_POLICY</code>) without spending LLM tokens.</td>
+                </tr>
+                <tr style="border-bottom:1px solid var(--border);">
+                  <td style="padding:10px 14px;vertical-align:top;font-weight:700;">2. PII / Repair Order Scrubber</td>
+                  <td style="padding:10px 14px;vertical-align:top;">Technicians pasting raw customer Repair Orders containing names, phone numbers, or credit card numbers into chat.</td>
+                  <td style="padding:10px 14px;vertical-align:top;">Pre-LLM regex/DLP sanitizer that masks <code>[REDACTED_PHONE]</code>, <code>[REDACTED_EMAIL]</code>, and <code>[REDACTED_CARD]</code> while keeping the 17-character VIN and DTC codes intact.</td>
+                </tr>
+                <tr style="border-bottom:1px solid var(--border);">
+                  <td style="padding:10px 14px;vertical-align:top;font-weight:700;">3. MCP Physical Actuation Interlock</td>
+                  <td style="padding:10px 14px;vertical-align:top;">Gemini accidentally calling <code>run_actuator_test</code> while the engine is running or without technician approval.</td>
+                  <td style="padding:10px 14px;vertical-align:top;">Policy check inside <code>POST /api/mcp/invoke</code> and <code>executeMcpToolCall()</code> that blocks bidirectional commands unless <code>interlockConfirmed !== false</code>, <code>gear === "PARK"</code>, and <code>engineRpm === 0</code>.</td>
+                </tr>
+                <tr>
+                  <td style="padding:10px 14px;vertical-align:top;font-weight:700;">4. Deterministic Torque &amp; HV Safety Enforcer</td>
+                  <td style="padding:10px 14px;vertical-align:top;">Gemini hallucinating a bolt torque spec (e.g., <code>25 Nm</code> instead of <code>15 Nm</code>) or forgetting a lethal 400V High-Voltage warning.</td>
+                  <td style="padding:10px 14px;vertical-align:top;">Extends existing <code>verify_diagnostic_contradictions</code> in <code>app/agent.py</code> and <code>retrieval/torque_filter.py</code> via <code>runOutputTorqueAndSafetyGuardrail()</code> in <code>server.ts</code> to compare every numeric torque value in the LLM text against the retrieved manual's <code>torqueSpecs</code> JSON and overwrite/flag any mismatch.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Foundation & Live Endpoints -->
+        <div class="subcard" style="margin-top:16px;">
+          <h3>Where We Already Have a Foundation + Live Guardrail APIs</h3>
+          <div class="grid-2" style="margin-top:8px;">
+            <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px;">
+              <div style="font-weight:700;font-size:12px;color:var(--primary);margin-bottom:6px;">Python ADK Foundation (<code>app/agent.py</code>)</div>
+              <p style="font-size:12px;margin:0;line-height:1.55;">
+                Stage 5 (<code>verify_diagnostic_contradictions</code>) and <code>retrieval/torque_filter.py</code> run deterministic post-generation checks for: (1) OEM section code citations, (2) High-Voltage / pressurized-fuel safety keywords, and (3) Fastener torque unit presence (<code>Nm</code> / <code>lb-in</code> / <code>ft-lb</code>).
+              </p>
+            </div>
+            <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px;">
+              <div style="font-weight:700;font-size:12px;color:var(--success);margin-bottom:6px;">Live Runtime Endpoints &amp; Module 12 Console</div>
+              <ul style="font-size:12px;margin:0;padding-left:16px;line-height:1.55;">
+                <li><code>GET /api/guardrails/policies</code>: Lists all 4 active guardrail layers &amp; policies.</li>
+                <li><code>POST /api/guardrails/test</code>: Executes 1-click tamper, PII, actuator RPM, and torque override scenarios.</li>
+                <li><strong>UI Tab:</strong> <em>MCP Hardware &amp; Tools &rarr; 4-Layer Guardrails</em> renders side-by-side Before/After payloads live.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const stages = {
+      1: {
+        badge: 'STAGE 1 — DOMAIN-AWARE ENTITY INGESTION',
+        title: 'Keeping Ford P0300 Procedure & Torque Specs Locked Together',
+        files: 'server/autoRagEngine.ts · custom_manuals.json',
+        code: `{
+  "id": "ford-ecoboost-p0300",
+  "vehicleMake": "Ford",
+  "vehicleModel": "F-150 EcoBoost 3.5L",
+  "yearRange": "2018-2024",
+  "system": "Engine Powertrain",
+  "title": "Ignition System & Random Misfire Diagnostic Procedure (DTC P0300 / P0302)",
+  "sectionCode": "TSB 21-2119 / WSM 303-07A",
+  "content": "DIAGNOSTIC PROCEDURE FOR RANDOM MISFIRE (P0300) ON 3.5L ECOBOOST V6:\\n1. Verify spark plug electrode gap: Factory specification is strictly 0.030 in (0.76 mm). Over-gapped plugs caused by spark erosion under twin-turbo boost pressures exceeding 14 psi will blow out spark kernel, triggering intermittent high-load misfires.\\n2. Direct-Injection Carbon Build-up: Inspect intake valves using borescope. Direct-injected engines lack port fuel washing; heavy carbon buildup on intake valve tulips causes air tumbling turbulence and cold-start misfire codes.\\n3. VCT Camshaft Phasers (TSB 21-2119): Check for cold-start rattle lasting 2-5 seconds. Worn locking pins in intake camshaft phasers cause timing deviation and intermittent P0016/P0300.\\n4. Fuel Rail Pressure Sensor (FRP): Verify low-pressure fuel pump delivery (55-65 psi) and high-pressure rail pressure (2,150 psi at idle, up to 2,900 psi under wide-open throttle).",
+  "torqueSpecs": {
+    "Spark Plugs": "15 Nm (133 lb-in)",
+    "Ignition Coil Retaining Bolts": "10 Nm (89 lb-in)",
+    "Intake Manifold Upper Bolts": "10 Nm (89 lb-in) in cross pattern",
+    "High-Pressure Fuel Pump Mounting Bolts": "12 Nm + 45 degrees"
+  },
+  "dtcCodes": ["P0300", "P0301", "P0302", "P0303", "P0016"]
+}`
+      },
+      2: {
+        badge: 'STAGE 2 — HYBRID RETRIEVAL + METADATA CHECKS',
+        title: 'Matching Make, Model, Generation Year (2021 in 2018–2024) & P0300',
+        files: 'server.ts (retrieveAndRerankManuals) · retrieval/hybrid_retriever.py',
+        code: `Candidate #1: ford-ecoboost-p0300 -> makeMatch: true, modelMatch: true, yearMatch: true, dtcMatch: true (Stage-1 Score: 3.713)
+Candidate #2: chevy-silverado-p050d -> makeMatch: false, modelMatch: false, yearMatch: true, dtcMatch: true (Stage-1 Score: 1.961)`
+      },
+      3: {
+        badge: 'STAGE 3 — DEEP RERANKER & TORQUE CONVERTER',
+        title: 'Promoting Ford TSB 21-2119 (5.913) & Flagging TTY Bolts',
+        files: 'server.ts (rerankLog, parseTorqueSpec) · retrieval/torque_filter.py',
+        code: `Rank #1: TSB 21-2119 / WSM 303-07A (Stage-1: 3.713 -> Stage-2: 5.913)
+Rank #2: GM TSB 21-NA-199 / PIP5553 (Stage-1: 1.961 -> Stage-2: 3.661)
+Spark Plugs -> { nm: 15, ft_lb: 11.1, in_lb: 133, is_torque_to_yield: false }
+HPFP Bolts  -> { nm: 12, in_lb: 106.2, angle_degrees: 45, is_torque_to_yield: true }`
+      },
+      4: {
+        badge: 'STAGE 4 — GOOGLE ADK SPECIALISTS',
+        title: 'Parallel Recall Cross-Check + 42,000-Mile Ford Warranty Evaluation',
+        files: 'app/agent.py · server.ts (executeAdkWorkflow)',
+        code: `recall_safety_specialist (9ms): 15 Ford F-150 recalls matched; ODI clustering links P0299/P0300 to cluster_turbo_oil_burn.
+warranty_policy_specialist (24ms): 42,000 mi / Age 5 yrs -> bumperToBumper: false, powertrain5yr60k: true, safetyRecallOverrideCandidate: true.
+Verdict: COVERED_UNDER_NHTSA_RECALL_OR_CHECK_VIN (Ford FY23 10-K Note 23: $4,782M accrual / 2.49% rev).`
+      },
+      5: {
+        badge: 'STAGE 5 — ADK SELF-REFLECTION GATE',
+        title: 'Auditing Citations, Fuel Rail Hazards & Fastener Units',
+        files: 'app/agent.py (verify_diagnostic_contradictions)',
+        code: `Checks: [OEM section citation, HV / pressurized-fuel safety gate, Torque unit presence, Recall consistency]
+Output: { "status": "PASS", "findings": [] }`
+      },
+      6: {
+        badge: 'STAGE 6 — SYNTHESIS, ANIMATION & FIRESTORE',
+        title: 'Final Report Delivery & Repair Ticket Persistence',
+        files: 'AutoServiceRag.tsx · VideoStudio.tsx · Firestore',
+        code: `1. Vertex AI (global) synthesizes procedure & renders 5 ADK steps + Warranty + Recalls + Torque in UI.
+2. Saving creates Firestore document in "autoServiceTickets" (2021 Ford F-150 P0300).`
+      }
+    };
+
+    const toolPayloads = {
+      search_workshop_manuals: { args: 'search_workshop_manuals("Ford", "F-150", "P0300")', out: '{"matched_manuals":[{"rank":1,"score":3.4249,"id":"ford-ecoboost-p0300","section_code":"TSB 21-2119 / WSM 303-07A"},{"rank":2,"score":1.5774,"id":"chevy-silverado-p050d"},{"rank":3,"score":1.0,"id":"pagani-p100-u0003"}],"total_indexed":9}' },
+      convert_fastener_torque: { args: 'convert_fastener_torque("15 Nm (133 lb-in)") & convert_fastener_torque("12 Nm + 45 degrees")', out: '{"raw":"15 Nm (133 lb-in)","nm":15.0,"ft_lb":11.1,"in_lb":133.0,"is_torque_to_yield":false}\n{"raw":"12 Nm + 45 degrees","nm":12.0,"in_lb":106.2,"angle_degrees":45,"is_torque_to_yield":true}' },
+      lookup_nhtsa_recalls: { args: 'lookup_nhtsa_recalls("Ford", "F-150")', out: '{"total_matched":15,"recalls":[{"recall_id":"21V986000","nhtsa_campaign_number":"21V986000","vehicle_make":"Ford","vehicle_model":"F-150","model_year":2021,"component":"POWER TRAIN:DRIVELINE:DRIVESHAFT"}]}' },
+      lookup_nhtsa_complaints: { args: 'lookup_nhtsa_complaints("Ford", "F-150", "misfire")', out: '{"total_matched":1,"crash_reports":0,"fire_reports":0,"sample_complaints":[{"odi_number":11761325,"vehicle_make":"Ford","vehicle_model":"Escape","components":"FUEL SYSTEM, GASOLINE"}]}' },
+      evaluate_warranty_coverage: { args: 'evaluate_warranty_coverage("Ford", "F-150", 2021, 42000, "P0300")', out: '{"verdict":"COVERED_UNDER_NHTSA_RECALL_OR_CHECK_VIN","coverage_tiers":{"bumper_to_bumper_3yr_36k":false,"powertrain_5yr_60k":true,"safety_recall_override_candidate":true},"oem_10k_benchmark":{"oem_name":"Ford Motor Company","warranty_accrual_expense_usd_million":4782.0,"warranty_as_pct_of_revenue":2.49}}' },
+      verify_diagnostic_contradictions: { args: 'verify_diagnostic_contradictions(diagnosis_text, "Ford F-150", "P0300")', out: '{"self_reflection_status":"PASS","findings":[],"verified_checks":["OEM section citation check","High-voltage / pressurized-fuel safety gate","Torque unit presence verification"]}' }
+    };
+
+    document.querySelectorAll('.tab-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const target = btn.getAttribute('data-tab');
+        document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        document.querySelectorAll('.tab-panel').forEach((p) => {
+          p.classList.toggle('hidden', target !== 'all' && p.id !== 'tab-' + target);
+        });
+      });
+    });
+
+    const stageDetail = document.getElementById('stage-detail');
+    function renderStage(n) {
+      const s = stages[n];
+      stageDetail.innerHTML = `<div class="muted" style="font-family:monospace;">${s.badge} · ${s.files}</div><h3>${s.title}</h3><pre>${s.code}</pre>`;
+    }
+    document.querySelectorAll('[data-stage]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('[data-stage]').forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        renderStage(Number(btn.getAttribute('data-stage')));
+      });
+    });
+    renderStage(1);
+
+    const toolDetail = document.getElementById('tool-detail');
+    function renderTool(name) {
+      const t = toolPayloads[name];
+      toolDetail.innerHTML = `<div style="font-family:monospace;font-size:12px;color:var(--primary);font-weight:700;">${t.args}</div><pre>${t.out}</pre>`;
+    }
+    document.querySelectorAll('[data-tool]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('[data-tool]').forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        renderTool(btn.getAttribute('data-tool'));
+      });
+    });
+    renderTool('search_workshop_manuals');
+
+    document.getElementById('theme-toggle').addEventListener('click', () => {
+      const root = document.documentElement;
+      root.setAttribute('data-theme', root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+    });
+  </script>
+</body>
+</html>
